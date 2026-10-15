@@ -1,6 +1,7 @@
 """E27 work stealing: a stolen leaf is handed back open (never closed), with a valid bound, and the solver's answer
 does not change when leaves are stolen aggressively."""
 import multiprocessing as mp
+import re
 import time
 
 import numpy as np
@@ -47,6 +48,16 @@ def test_stealing_happens_and_the_proven_optimum_is_unchanged(best_known):
     name = "P100_growth_penalised"
     r = solver.solve(name, workers=6, time_limit=120, n_leaves=6, quick_seconds=0, steal_after=2.0)
     util = [line for line in r.log if "tree utilization" in line]
-    steals = sum(int(line.rsplit("steals: ", 1)[1]) for line in util)
+    steals = sum(int(re.search(r"steals: (\d+)", line).group(1)) for line in util)
     assert steals > 0, util
+    assert r.proven and r.objective == pytest.approx(best_known[name]["objective"], rel=1e-9)
+
+
+def test_racing_happens_and_the_proven_optimum_is_unchanged(best_known):
+    """E28: idle workers race copies of the weakest open leaf; the proof must land on the known optimum."""
+    name = "P100_growth_penalised"
+    r = solver.solve(name, workers=6, time_limit=120, n_leaves=6, quick_seconds=0, race_after=0.5)
+    util = [line for line in r.log if "tree utilization" in line]
+    races = sum(int(re.search(r"races: (\d+)", line).group(1)) for line in util)
+    assert races > 0, util
     assert r.proven and r.objective == pytest.approx(best_known[name]["objective"], rel=1e-9)

@@ -279,6 +279,8 @@ def _sb_task(splits: list[Split], p: int, s: int) -> tuple[Node | None, Node | N
 
 def _offer(starts: np.ndarray, obj: float) -> None:
     with _W["lock"]:
+        if _W["stop"].value:  # the master has finished: copies still winding down must not change the result
+            return
         if obj < _W["best_val"].value:
             _W["best_val"].value = obj
             _W["best_starts"][:] = [int(s) for s in starts]
@@ -474,7 +476,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False,
                    lns_after_rampup: bool = False, lns_patience: float | None = None,
                    lns_alns: bool = False, lns_first: float = 0.0,
-                   steal_after: float | None = None) -> ParallelResult:
+                   steal_after: float | None = None, race_after: float | None = None,
+                   max_racers: int = 4) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -500,6 +503,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         leaf with the weakest live bound that has run at least this many seconds is interrupted and re-split, so idle
         workers get its subtrees instead of waiting for a slice to expire. None = off. The log reports tree
         utilization either way.
+    race_after (E28): racing. When nothing is queued, an incumbent exists and a tree worker is idle, start one more
+        copy (another seed, same splits and deadline) of the open leaf group with the weakest bound whose oldest
+        running copy has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
+        (optimal, pruned, infeasible) closes it and the others are stopped; a group ending open is re-split or closed
+        only when its last copy ends, with the best bound any copy reached. None = off.
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
@@ -611,7 +619,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         t_prev = time.time()
         stealing: set[int] = set()
         steals = 0
-        while heap or running:
+        groups: dict[int, dict] = {}  # E28: leaf group -> copies running, best bound so far, deadline, closed
+        races = racer_wins = 0
+        racers: set = set()
+        while heap or any(not groups[rv[6]]["closed"] for rv in running.values()):
             for f in [f for f in lns if f.done()]:
                 lns.remove(f)
                 trace.extend(f.result()["found"])
@@ -630,7 +641,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     steal[slot] = 0
                 cut = leaf_cutoff or (cutoff_after is not None and time.time() - t0 >= cutoff_after)
                 fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k + 7919 * seed, t0, cut, slot, b)
-                running[fut] = (b, splits, sl, sl is not None and tl < remaining, slot, time.time())
+                running[fut] = (b, splits, sl, sl is not None and tl < remaining, slot, time.time(), k)
+                groups[k] = {"members": {fut}, "bound": b, "deadline": time.time() + max(0.5, tl), "closed": False,
+                             "copies": 1, "cut": cut}
             tree_workers = workers - len(lns)
             if (steal_after is not None and not heap and running and not stealing and best_val.value < np.inf
                     and len(running) <= tree_workers // 2):  # E27: idle workers and nothing queued: take a leaf back
@@ -642,6 +655,33 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     victim = min(cands)[1]
                     steal[victim] = 1
                     stealing.add(victim)
+                    steals += 1
+            if (race_after is not None and not heap and best_val.value < np.inf and free_slots
+                    and len(running) < tree_workers):  # E28: an idle tree worker races the weakest open group
+                now = time.time()
+                cands = []
+                for g, grp in groups.items():
+                    if grp["closed"] or grp["copies"] >= max_racers or grp["deadline"] - now < 1.0:
+                        continue
+                    first = min(running[f][5] for f in grp["members"])
+                    if now - first < race_after:
+                        continue
+                    gb = max([grp["bound"]] + [max(running[f][0], live[running[f][4]]) for f in grp["members"]
+                                               if running[f][4] >= 0])
+                    cands.append((gb, g))
+                if cands:
+                    g = min(cands)[1]
+                    grp = groups[g]
+                    rv = running[next(iter(grp["members"]))]
+                    slot = free_slots.pop()
+                    steal[slot] = 0
+                    fut = pool.submit(_solve_leaf, rv[1], max(0.5, grp["deadline"] - now),
+                                      g + 7919 * seed + 104729 * grp["copies"], t0, grp["cut"], slot, grp["bound"])
+                    running[fut] = (rv[0], rv[1], rv[2], rv[3], slot, now, g)
+                    grp["members"].add(fut)
+                    grp["copies"] += 1
+                    races += 1
+                    racers.add(fut)
             done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
             done = {f for f in done if f in running}
             now = time.time()
@@ -657,24 +697,57 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 trace.append((time.time() - t0, last_seen))
                 sink(trace[-1][0], last_seen, best_starts[:])
             # proven bound now: finished subtrees, queued subtrees (LP bounds), running subtrees (their start bounds)
-            bound_now = min([min_closed] + [hb[0] for hb in heap[:1]]
-                            + [max(rv[0], live[rv[4]]) if rv[4] >= 0 else rv[0] for rv in running.values()]
+            run_bounds: dict[int, float] = {}  # per group: the best bound any running copy has proven (E28)
+            for rv in running.values():
+                if groups[rv[6]]["closed"]:
+                    continue
+                v = max(rv[0], live[rv[4]]) if rv[4] >= 0 else rv[0]
+                run_bounds[rv[6]] = max(run_bounds.get(rv[6], groups[rv[6]]["bound"]), v)
+            bound_now = min([min_closed] + [hb[0] for hb in heap[:1]] + list(run_bounds.values())
                             + [best_val.value])
             if bound_now > last_bound + 1e-12 * abs(bound_now):
                 last_bound = bound_now
                 bound_trace.append((time.time() - t0, bound_now))
                 sink_bound(bound_trace[-1][0], bound_now)
             for fut in done:
-                b, splits, sl, sliced, slot, started = running.pop(fut)
+                b, splits, sl, sliced, slot, started, g = running.pop(fut)
                 if slot >= 0:
                     live[slot] = -np.inf
                     free_slots.append(slot)
                     stealing.discard(slot)
-                r = fut.result()
-                census.append((r["bound"], time.time() - started, r.get("nodes", 0), r["status"], len(splits)))
+                grp = groups[g]
+                grp["members"].discard(fut)
+                try:
+                    r = fut.result()
+                except Exception:
+                    if grp["closed"] or grp["members"]:  # E28 audit B1: another copy covers this subtree
+                        if grp["closed"] and not grp["members"]:
+                            del groups[g]
+                        continue
+                    raise
                 trace.extend(r["found"])
+                if grp["closed"]:  # another copy already finished this subtree: this one was stopped
+                    census.append((r["bound"], time.time() - started, r.get("nodes", 0), "ignored", len(splits)))
+                    if not grp["members"]:
+                        del groups[g]
+                    continue
+                census.append((r["bound"], time.time() - started, r.get("nodes", 0), r["status"], len(splits)))
+                grp["bound"] = max(grp["bound"], r["bound"])
+                if r["status"] in ("Optimal", "pruned", "empty", "Infeasible"):  # the subtree is finished
+                    closed.append(max(r["bound"], grp["bound"]))
+                    grp["closed"] = True
+                    racer_wins += fut in racers  # a racing copy, not the original, finished it
+                    for f in grp["members"]:  # stop the other copies (their results are ignored)
+                        if running[f][4] >= 0:
+                            steal[running[f][4]] = 1
+                    if not grp["members"]:
+                        del groups[g]
+                    continue
+                if grp["members"]:  # ended open, but other copies are still working on this subtree
+                    continue
+                del groups[g]
+                r = dict(r, bound=grp["bound"])  # the best bound any copy proved for this subtree
                 stolen = r["status"] == "stolen"
-                steals += stolen
                 # an unexpected interrupt is reopened too: only finished, pruned or globally timed-out leaves close
                 reopen = stolen or r["status"] == "Interrupted by user"
                 if (r["status"] == "Time limit reached" and sliced) or reopen:
@@ -705,7 +778,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             trace.append((time.time() - t0, best_val.value))
         if cap_s > 0:
             log.append(f"tree utilization: {busy_s / cap_s:.0%} of tree-worker time busy; under half busy for "
-                       f"{low_s:.0f}s; steals: {steals}")
+                       f"{low_s:.0f}s; steals: {steals}; races: {races} ({racer_wins} won by a later copy)")
         if census:  # E1: which leaves held the bound (lowest final bounds first)
             worst = sorted(census)[:5]
             log.append("leaf census (worst bounds): " + "; ".join(
