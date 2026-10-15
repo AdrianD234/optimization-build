@@ -1,0 +1,3 @@
+[highs_reference] P100_raw_nopenalty s0: obj -7.411905e+13 proven False 1% 75.82 0.1% 148.81 bk None proof None (1080.2s)
+[highs_reference] P100_growth_nopenalty s0: obj -1.389382e+14 proven True 1% 0.84 0.1% 0.84 bk 1.23 proof 1.71 (1.71s)
+[highs_reference] P100_growth_nopenalty s0: obj -1.389382e+14 proven True 1% 0.84 0.1% 0.84 bk 1.23 proof 1.71 (1.71s)

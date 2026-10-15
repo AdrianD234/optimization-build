@@ -1,6 +1,8 @@
 """Run a built model with HiGHS and record an incumbent trace (wall-clock seconds, evaluator objective)."""
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -11,6 +13,14 @@ import numpy as np
 
 from .evaluate import objective
 from .formulation import Model
+
+
+def sink(t: float, obj: float, starts) -> None:
+    """Append an incumbent to $CAPOPT_TRACE_FILE (if set), so a run killed by the benchmark watchdog keeps its trace."""
+    path = os.environ.get("CAPOPT_TRACE_FILE")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": round(t, 3), "obj": obj, "starts": [int(x) for x in starts]}) + "\n")
 
 
 @dataclass
@@ -28,6 +38,7 @@ class Trace:
                 self.best = obj
                 self.best_starts = np.array(starts, dtype=np.int64)
                 self.points.append((time.perf_counter() - self.t0, obj, source))
+                sink(self.points[-1][0], obj, starts)
                 return True
         return False
 
@@ -52,11 +63,24 @@ class SolveResult:
     nodes: int = 0
 
 
+_SCHEDULER_THREADS: list[int] = []
+
+
+def new_highs(threads: int = 1) -> highspy.Highs:
+    """A Highs instance with an explicit thread count. HiGHS keeps one process-wide task scheduler; asking for a
+    different thread count once it exists makes run() fail ("Not Set"), so the scheduler is reset when it changes."""
+    if _SCHEDULER_THREADS and _SCHEDULER_THREADS[0] != threads:
+        highspy.Highs.resetGlobalScheduler(True)
+    _SCHEDULER_THREADS[:] = [threads]
+    h = highspy.Highs()
+    h.setOptionValue("threads", int(threads))
+    return h
+
+
 def make_highs(model: Model, threads: int = 1, time_limit: float = 60.0, rel_gap: float = 1e-9, abs_gap: float = 1e-6,
                log: bool = False, seed: int = 0, options: dict | None = None) -> highspy.Highs:
-    h = highspy.Highs()
+    h = new_highs(threads)
     h.setOptionValue("output_flag", bool(log))
-    h.setOptionValue("threads", int(threads))
     h.setOptionValue("time_limit", float(time_limit))
     h.setOptionValue("mip_rel_gap", float(rel_gap))
     h.setOptionValue("mip_abs_gap", float(abs_gap))
@@ -113,8 +137,8 @@ def solve(model: Model, trace: Trace | None = None, source: str = "highs", threa
         vals = np.asarray(sol.col_value)
         if len(vals) == len(model.builder.cost):
             starts = model.starts_from_solution(vals)
-            mobj = info.objective_function_value
-    res = SolveResult(status, secs, mobj, info.mip_dual_bound, starts, int(info.mip_node_count))
+            mobj = model.user(info.objective_function_value)
+    res = SolveResult(status, secs, mobj, model.user(info.mip_dual_bound), starts, int(info.mip_node_count))
     return res
 
 

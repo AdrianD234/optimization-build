@@ -42,6 +42,17 @@ class MipBuilder:
     row_idx: list[list[int]] = field(default_factory=list)
     row_val: list[list[float]] = field(default_factory=list)
     offset: float = 0.0
+    obj_scale: float = 1.0  # HiGHS sees cost * obj_scale (a power of two, so scaling is exact)
+
+    def auto_scale(self, max_abs: float = 2.0 ** 28) -> float:
+        """Scale the objective down by a power of two when its largest coefficient exceeds `max_abs`. The no-penalty
+        instances have PV coefficients near 2.4e12, which break HiGHS' dual simplex ("excessive dual values")."""
+        big = max((abs(c) for c in self.cost), default=0.0)
+        k = 0
+        while big * 2.0 ** -k > max_abs:
+            k += 1
+        self.obj_scale = 2.0 ** -k
+        return self.obj_scale
 
     def var(self, cost: float, lb: float, ub: float, integer: bool = False, name: str = "") -> int:
         self.cost.append(cost); self.lb.append(lb); self.ub.append(ub); self.integer.append(integer)
@@ -66,7 +77,7 @@ class MipBuilder:
         h = h or highspy.Highs()
         n = len(self.cost)
         h.addVars(n, np.array(self.lb, dtype=np.float64), np.array(self.ub, dtype=np.float64))
-        h.changeColsCost(n, np.arange(n, dtype=np.int32), np.array(self.cost, dtype=np.float64))
+        h.changeColsCost(n, np.arange(n, dtype=np.int32), np.array(self.cost, dtype=np.float64) * self.obj_scale)
         ints = np.array([i for i, b in enumerate(self.integer) if b], dtype=np.int32)
         if len(ints):
             h.changeColsIntegrality(len(ints), ints, np.full(len(ints), highspy.HighsVarType.kInteger))
@@ -76,7 +87,7 @@ class MipBuilder:
         h.addRows(len(self.row_lo), np.array(self.row_lo, dtype=np.float64), np.array(self.row_hi, dtype=np.float64),
                   len(idx), np.array(starts, dtype=np.int32), np.array(idx, dtype=np.int32), np.array(val, dtype=np.float64))
         if self.offset:
-            h.changeObjectiveOffset(self.offset)
+            h.changeObjectiveOffset(self.offset * self.obj_scale)
         return h
 
 
@@ -91,6 +102,13 @@ class Model:
     options: list[np.ndarray]                 # per project: start years available in this model
     start_cols: list[list[int]]               # per project: column per option (pulse) or per option but last (step)
     aux: dict = field(default_factory=dict)   # named continuous columns, e.g. net[t], band[t][i]
+
+    def user(self, v: float) -> float:
+        """A HiGHS objective value (scaled) in the instance's objective units."""
+        return v / self.builder.obj_scale
+
+    def solver_units(self, v: float) -> float:
+        return v * self.builder.obj_scale
 
     def starts_from_solution(self, col_value: np.ndarray) -> np.ndarray:
         out = np.empty(self.inst.n, dtype=np.int64)
@@ -249,6 +267,7 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
                     excess -= take
         del closing
 
+    b.auto_scale()
     return Model(inst, "last_year", b, L, encoding, options, start_cols,
                  {"net": net_cols, "bands": band_cols, "fill": fill})
 
@@ -322,4 +341,5 @@ def reference_bigm(inst: Instance) -> Model:
                 x[bands[t][i]] = take
                 excess -= take
 
+    b.auto_scale()
     return Model(inst, "reference_bigm", b, None, "pulse", options, start_cols, {"fill": fill})

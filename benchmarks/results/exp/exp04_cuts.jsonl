@@ -1,0 +1,2 @@
+{"instance": "P100_raw_nopenalty", "enc": "step", "rounds": 30, "cuts": 329, "status": "Optimal", "secs": 286.8, "nodes": 45436, "bound": -74119916766966.0, "t01": 4.0659698999952525, "tbk": 247.4890105999948}
+

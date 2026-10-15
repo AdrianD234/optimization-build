@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--instances", default=",".join(I.INSTANCE_NAMES))
     b.add_argument("--seeds", default="0")
     b.add_argument("--time-limit", type=float, default=900.0)
+    b.add_argument("--no-isolate", action="store_true", help="run in this process (no watchdog subprocess)")
+    b.add_argument("--out-dir", default=str(bench.RESULTS))
     sub.add_parser("report", help="write benchmarks/BENCHMARK.md from stored runs")
     a = ap.parse_args(argv)
     if a.cmd == "solve":
@@ -37,7 +39,12 @@ def main(argv: list[str] | None = None) -> int:
         for cfg in a.configs.split(","):
             for name in a.instances.split(","):
                 for seed in (int(x) for x in a.seeds.split(",")):
-                    rec = bench.run(cfg, name, a.time_limit, seed)
+                    out = Path(a.out_dir)
+                    rec = (bench.run(cfg, name, a.time_limit, seed, out) if a.no_isolate
+                           else bench.run_isolated(cfg, name, a.time_limit, seed, out))
+                    if "skipped" in rec:
+                        print(f"[{cfg}] {name} s{seed}: skipped ({rec['skipped']})", flush=True)
+                        continue
                     print(f"[{cfg}] {name} s{seed}: obj {rec['objective']:.6e} proven {rec['proven']} "
                           f"1% {rec['time_to_1pct']} 0.1% {rec['time_to_0.1pct']} bk {rec['time_to_best_known']} "
                           f"proof {rec['time_to_proof']} ({rec['seconds']}s)", flush=True)

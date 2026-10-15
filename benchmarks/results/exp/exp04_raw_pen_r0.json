@@ -1,0 +1,1 @@
+{"instance": "P100_raw_penalised", "enc": "step", "rounds": 0, "cuts": 0, "status": "Optimal", "secs": 215.8, "nodes": 53682, "bound": -7408929413.924333, "t01": 28.387393600001815, "tbk": 200.68992589999834}
