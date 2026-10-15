@@ -21,7 +21,7 @@
 | **CPO untimed** | CFADS P50/P95, S1750 P50/P95 | the CPO's stored objective (gap 6e-6 to 1e-5) | `private/cpo/` |
 | **Pack** (regression) | the four `benchmark_pack` instances | HiGHS-baseline times; proven optima | public |
 
-**Primary KPI:** shifted geometric mean, over the 8 timed scenarios, of (capopt time to gap 1e-5) / (COPT logged time), with a 10 s shift. Below 1.0 means we beat COPT.
+**Primary KPI:** shifted geometric mean, over the 8 timed scenarios, of (capopt time to gap 1e-5) / (COPT logged time), with a 10 s shift. Below 1.0 means we beat COPT. capopt runs on the **cap-free** instances (removing the start cap moves the root bound by about 0.003%, so this counts as like-for-like; `_startcap100` copies are kept for occasional strict checks). **Variance rule:** each capopt KPI number is the **median of 3 seeds**, shown with its range. COPT's logged times are **single runs** (a commercial solver's time on one instance has been seen to vary about 4x between runs), so a win counts only when capopt's whole range sits below COPT's number.
 **Secondary:** time to within 1% and 0.1% of the CPO objective, final objective vs the CPO's (we may find better schedules), and pack regression (no instance more than 20% slower).
 
 Caveats that favour COPT, kept visible in every report:
@@ -105,5 +105,6 @@ The CPO model capped project starts at 100 per year, which binds in 2026 on the 
 | Q7 | How does it scale with programme size? | Programmes grow | Project subsets of 150 / 200 / 233 | queued |
 | Q8 | How fast is an incremental re-solve? | Re-optimising after a cost update | Perturb 1-5 projects, warm start, time to 0.1% | queued |
 | Q9 | Is a deterministic mode needed (audit)? | The parallel solver can return different equal-value schedules | User decision | needs the user |
+| Q11 | How much of a commercial solver's time is the end-of-programme logic? | In the original model the last build year is decided inside the MIP (per-year activity binaries, indicators, final-year dividend); capopt removes this by fixing L | MindOpt arms on the 3 screening scenarios (one solve at a time, overnight block): M0 original (done); M-fixL original model with the last year fixed; M2 capopt's fixed-L model; optional M-nodiv (no dividend, funding every year, all years penalised: a policy variant compared on time only) | queued (overnight) |
 | Q10 | Fork HiGHS for an in-run cutoff update? | The branching research's most valuable small fork | Decide after the E1/E2 screen | pending E1/E2 |
 
