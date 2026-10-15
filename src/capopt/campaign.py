@@ -45,6 +45,32 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
+LOAD_LOG = ROOT / "private" / "cpo" / "load_log.csv"  # written by an external sampler (see load_tag)
+
+
+def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
+             mean_limit: float = 1.0, peak_limit: float = 4.0) -> dict[str, Any] | None:
+    """Machine load outside capopt during [t_start, t_end], from a CSV of samples
+    (unix_time, other_cores, python_cores, excel_cores, free_gb; one row per ~10 s). `contended` is True when other
+    processes averaged more than `mean_limit` cores or peaked above `peak_limit`. None when no samples cover the run.
+    Timing results are tagged rather than discarded: a contended run is flagged for a rerun before it enters the KPI."""
+    path = Path(os.environ.get("CAPOPT_LOAD_LOG", LOAD_LOG) if path is None else path)
+    if not path.exists():
+        return None
+    rows = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines()[1:]:
+        f = line.split(",")
+        try:
+            if t_start <= float(f[0]) <= t_end:
+                rows.append((float(f[1]), float(f[4])))
+        except (ValueError, IndexError):
+            continue
+    if not rows:
+        return None
+    other = [r[0] for r in rows]
+    mean, peak = sum(other) / len(other), max(other)
+    return {"samples": len(rows), "other_cores_mean": round(mean, 2), "other_cores_peak": round(peak, 2),
+            "free_gb_min": round(min(r[1] for r in rows), 1), "contended": mean > mean_limit or peak > peak_limit}
 HEARTBEAT_S = 30.0
 STALE_S = 300.0          # no heartbeat for this long => STALLED
 NOT_STARTED_S = 60.0     # launch marker this old with no progress file => NOT_STARTED
@@ -118,10 +144,12 @@ def reference_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, A
     trace_file = out / f"{label}.trace.jsonl"
     trace_file.unlink(missing_ok=True)
     os.environ["CAPOPT_TRACE_FILE"] = str(trace_file)
+    t_start = time.time()
     try:
         r = solver.solve(str(run["instance"]), run.get("workers"), time_limit, **run.get("options", {}))
     finally:
         os.environ.pop("CAPOPT_TRACE_FILE", None)
+    load = load_tag(t_start, time.time())
     rec = {"label": label, "instance": str(run["instance"]), "reference": str(run["reference"]),
            "options": run.get("options", {}), "time_limit": time_limit, "objective": r.objective, "proven": r.proven,
            "dual_bound": r.dual_bound, "seconds": round(r.seconds, 2), "reference_objective": target,
@@ -131,9 +159,10 @@ def reference_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, A
            "time_to_ref_within_0.1pct": time_to(r.trace, target, 0.001),
            "time_to_ref_objective": time_to(r.trace, target, 0.0),
            "time_to_proof": round(r.seconds, 2) if r.proven else None,
-           "trace": r.trace, "log": r.log, "starts": r.starts}
+           "load": load, "trace": r.trace, "log": r.log, "starts": r.starts}
     (out / f"{label}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
     return {"status": "done", "objective": r.objective, "proven": r.proven, "time_to_proof": rec["time_to_proof"],
+            "contended": None if load is None else load["contended"],
             "vs_reference_rel": rec["vs_reference_rel"], "time_to_ref_within_0.1pct": rec["time_to_ref_within_0.1pct"]}
 
 

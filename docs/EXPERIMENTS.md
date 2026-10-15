@@ -337,3 +337,50 @@ Setup: KPI pass 2 (warm start, 16 ALNS workers after the ramp-up with 15 s patie
 
 * **Primary KPI** (shifted geometric mean of capopt time / COPT time, 10 s shift), with s2000_P50 counted at its 300 s limit: **0.93**. This is a lower bound, because s2000_P50 was not proven, and it is a single seed; the KPI rule needs the median of 3 seeds.
 * capopt now beats COPT's logged time on three of the six scenarios: the CFADS P50, P50high and P95high cases. The s2000 pair is primal-limited: LNS only starts after the 25 s ramp-up, then reaches -1.2e-4 within about 10 s (E24).
+
+### E24: an all-worker LNS burst (10 s) before the ramp-up
+
+* Option `lns_first`: with an incumbent in hand, all 20 workers run LNS for this long before the ramp-up, so the ramp-up prunes against a better cutoff and LNS starts earlier.
+* **Result** (KPI pass 4 setup plus a 10 s burst, seed 0):
+
+| Scenario | KPI pass 4 | E24 |
+|---|---|---|
+| s2000_P50high | proven 107 s | not proven by 300 s (gap 1.1e-5) |
+| s2000_P50 | gap 2.2e-5 at 300 s | gap 1.5e-5 at 300 s (new best schedule, -1.42e-4) |
+| cfadsds_P50 | proven 172 s | proven 194 s |
+
+* **Verdict**: no gain. The burst finds 76 improvements in 12 s, but the ramp-up prunes the same number of nodes (189 vs 190), and the two runs move in opposite directions on the s2000 pair. The option stays, off by default.
+
+### E25-E26: proof-only diagnostics on s2000_P50 (warm start from its best-known schedule, no LNS)
+
+| Arm | Proof of 1e-5 |
+|---|---|
+| E25: k = 4 (auto), 60 s slices | 354 s (24 re-splits, bound-holding leaves at depth 29-34) |
+| E26a: k = 16 capped, 60 s slices | not proven by 600 s (gap 1.1e-5); ramp-up 61 s, 158 pruned (vs 206) |
+| E26b: k = 4, 120 s slices | **314 s** (5 re-splits) |
+
+* Unlike s2000_P50high (54-60 s proof-only), s2000_P50 is **tree-limited**: even with its best schedule in hand, the proof takes 5x COPT's whole run (108 s). The capped 16-candidate rule that helps CFADS hurts here, which supports the automatic switch. Longer slices help a little, consistent with re-splits discarding HiGHS search state.
+* During E26 capopt used only about 4 of 20 cores: in the proof tail the queue is empty and a few leaves hold the bound while the other workers wait for a slice to expire.
+
+### E27: work stealing (opt-in, stays off)
+
+* The idea: when the queue is empty and at most half the tree workers are busy (and an incumbent exists), the master interrupts the running leaf with the weakest live bound that has run at least `steal_after` seconds. The leaf comes back with status `stolen`, which is always re-split and never closed. Its children inherit max(child LP bound, the leaf's returned bound). The log now reports tree utilization (busy tree-worker time / available) and the number of steals for every solve.
+* Tests: a flagged leaf returns `stolen` with a valid bound (between its LP bound and the known optimum); an unflagged one never does; on a pack instance steals do happen (11) and the proof lands on the known optimum.
+* **Probes**:
+  * On synthetic instances with immediate stealing (`steal_after=0`), solves that prove in 2-4 s failed to prove in 120 s. This is a steal storm: leaves interrupted before making progress, their children stolen again.
+  * With a 2 s delay and 6 workers on the pack (all runs reached the known optimum):
+
+| Instance | No stealing | Stealing after 2 s |
+|---|---|---|
+| P100_growth_penalised | proven 5.6 s, 34% utilization | proven 21.3 s, 11 steals |
+| P100_raw_penalised | proven 119.6 s, 18% utilization | not proven by 150 s, 67% utilization, 13 steals |
+
+* **Verdict**: correctness holds, but stealing makes solves slower. It raises utilization (18% to 67%) while destroying progress: an interrupted HiGHS leaf loses its cuts, pseudocosts and search tree, and the re-split children redo the work (as I4 found for time slicing). It stays opt-in and off. The design work continues with the parallel load-balancing literature review (`docs/research/PARALLEL_BB_LOAD_BALANCING.md`); candidates that use idle workers without discarding work are racing a hard leaf with different seeds, and solving a hard leaf's children while it keeps running.
+
+### Load tags on timed results
+
+From 2026-10-16, an external sampler logs the machine's CPU load outside capopt every 10 s. Each campaign result carries a `load` record (mean and peak outside cores, minimum free memory) and a `contended` flag (mean above 1 core or peak above 4). Runs before this (everything up to E26, including KPI passes 1-4) were not load-logged: in the first 18 minutes of logging the outside load averaged 1.5 cores (p90 2.4, one spike of 7.2) while the user worked in parallel. The KPI figures so far are therefore **provisional**; the official KPI will be rerun with 3 seeds and load tags in a quiet window.
+* **Independent audit** (`docs/research/PARALLEL_BB_LOAD_BALANCING.md`: academic literature on parallel B&B load balancing, plus a code audit against its correctness invariants):
+  * **Passed:** global bound validity, including leaves in flight (checked against the HiGHS source: the dual bound after a user interrupt is the queue's lower bound); children exactly partitioning a stolen subtree; no stolen leaf closed with a partial bound; termination; incumbent/cutoff consistency; steal-flag races; the time limit.
+  * **One liveness bug, fixed:** a stolen leaf whose LP is integral was re-queued to "run to the end" but was still stealable, so it could be restarted forever. Such leaves are now pinned (never stolen). Defensive hardening: an unexpected interrupt status now reopens the subtree instead of closing it.
+  * The literature (UG/ParaSCIP, CHiPPS/ALPS) keeps the donor solving and ships only part of its open nodes, throttles stealing adaptively, and splits a donor into enough pieces to fill all idle workers. A restarted solver loses its search state (about 4.7% per restart in SCIP), and in HiGHS an early interrupt also throws away the root cut loop. These are the directions for a stealing design that does not discard work.

@@ -246,3 +246,16 @@ def test_warm_start_in_a_later_last_year_is_solved_first_and_still_proves(tmp_pa
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2, warm_start=str(sol))
     assert any("solved first" in line for line in r.log)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_lns_burst_before_the_ramp_up_still_proves(tmp_path):
+    import json
+    raw = S.tiny(6, 9, 100, 29, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, bf_starts = S.brute_force(inst)
+    sol = tmp_path / "warm.json"
+    sol.write_text(json.dumps({"starts": inst.starts_to_dict(np.asarray(bf_starts))}), encoding="utf-8")
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, warm_start=str(sol), lns_first=0.5, quick_seconds=0)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    assert any("lns burst" in line for line in r.log)
