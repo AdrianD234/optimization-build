@@ -636,8 +636,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     and len(running) <= tree_workers // 2):  # E27: idle workers and nothing queued: take a leaf back
                 # (never before an incumbent exists: leaves are the main source of schedules then)
                 now = time.time()
-                cands = [(max(rv[0], live[rv[4]]), rv[4]) for rv in running.values()
-                         if rv[4] >= 0 and now - rv[5] >= steal_after]
+                cands = [(max(rv[0], live[rv[4]]), rv[4]) for rv in running.values()  # pinned (sl = inf): never
+                         if rv[4] >= 0 and rv[2] != np.inf and now - rv[5] >= steal_after]
                 if cands:
                     victim = min(cands)[1]
                     steal[victim] = 1
@@ -675,13 +675,16 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 trace.extend(r["found"])
                 stolen = r["status"] == "stolen"
                 steals += stolen
-                if (r["status"] == "Time limit reached" and sliced) or stolen:
+                # an unexpected interrupt is reopened too: only finished, pruned or globally timed-out leaves close
+                reopen = stolen or r["status"] == "Interrupted by user"
+                if (r["status"] == "Time limit reached" and sliced) or reopen:
                     node = _lp_node(model, splits)
                     if node is None:
                         closed.append(np.inf); continue
                     nxt = sl * slice_growth if sl else None
-                    if not node.frac:  # LP integral yet the MIP is open: let it run to the end
-                        heapq.heappush(heap, (max(b, r["bound"]), seq, splits, None)); seq += 1; continue
+                    if not node.frac:  # LP integral yet the MIP is open: let it run to the end, pinned (sl = inf)
+                        # so it can never be stolen again (E27 audit: otherwise it can be restarted forever)
+                        heapq.heappush(heap, (max(b, r["bound"]), seq, splits, np.inf)); seq += 1; continue
                     resplits += 1
                     for child in _branch(model, node, sb_candidates, sb_pool, tol()):
                         if child is not None:  # E1: a child keeps at least its parent's proven bound
