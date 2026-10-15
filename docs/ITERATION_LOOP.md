@@ -108,3 +108,40 @@ The CPO model capped project starts at 100 per year, which binds in 2026 on the 
 | Q11 | How much of a commercial solver's time is the end-of-programme logic? | In the original model the last build year is decided inside the MIP (per-year activity binaries, indicators, final-year dividend); capopt removes this by fixing L | MindOpt arms on the 3 screening scenarios (one solve at a time, overnight block): M0 original (done); M-fixL original model with the last year fixed; M2 capopt's fixed-L model; optional M-nodiv (no dividend, funding every year, all years penalised: a policy variant compared on time only) | queued (overnight) |
 | Q10 | Fork HiGHS for an in-run cutoff update? | The branching research's most valuable small fork | Decide after the E1/E2 screen | pending E1/E2 |
 
+
+## Research recommendations tracker
+
+Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ partly, ❌ not tried, ✖ dropped on evidence.
+
+| Source | Recommendation | Status | Where |
+|---|---|---|---|
+| BRANCHING_AND_TREE E1 | Live leaf bounds, bound inheritance | ✅ | E1 |
+| BRANCHING_AND_TREE E2 | Phase-aware leaf cutoff | ✅ | E2 (`cutoff_after`) |
+| BRANCHING_AND_TREE E3 | Strong-branching ramp-up | ✅ | E11, E12, E22, E23 |
+| BRANCHING_AND_TREE E4 | **Hedged re-split: the parent keeps running while its children use idle workers** (ranked the largest expected wall-clock gain) | ❌ | E27 killed the parent (slower, as the literature predicts); E28 races copies (neutral) |
+| BRANCHING_AND_TREE E5 | Proof-phase leaf settings (heuristic effort, pseudocost reliability) | ❌ | queued |
+| BRANCHING_AND_TREE E6 | Endgame racing | ◐ | E28: seeds only (not `threads=k` or encoding variants) |
+| BRANCHING_AND_TREE E7 | General disjunctions | ✖ | gap anatomy: variable splits dominate |
+| BRANCHING_AND_TREE E8 | Leaf difficulty census and scheduling | ◐ | census logged, not used for scheduling |
+| BRANCHING_AND_TREE fork | Dynamic in-solve cutoff (HiGHS change) | ❌ | Q10 |
+| GAP_ANATOMY #1 | Strong-branching ramp-up and re-split | ✅ | E11-E12 |
+| GAP_ANATOMY #2 | Outer LP tree as the main proof engine | ◐ | strong-branching ramp-up only; no persistent loop |
+| GAP_ANATOMY #3 | Year-block Lagrangian bound | ❌ | queued (with CFADS #4) |
+| GAP_ANATOMY #4-5 | Gomory splits; drop list | ✖ | as advised |
+| CFADS_BOUND_STALL #1 | Capped product score, k = 16 | ✅ | E22, E23 |
+| CFADS_BOUND_STALL #2(a) | More leaves (about 200) when the root has more than 15 fractional projects | ❌ | queued |
+| CFADS_BOUND_STALL #2(b) | Work stealing | ✖ | E27: correct but slower |
+| CFADS_BOUND_STALL #3(a) | Root cover cuts | ✖ | E22B: no gain |
+| CFADS_BOUND_STALL #3(b) | End-of-horizon covering cuts | ❌ | queued |
+| CFADS_BOUND_STALL #4 | Final-years block bound to prune P95's L = 42 | ❌ | queued |
+| PARALLEL_BB R0, R5 | Pin LP-integral re-queues; reopen unexpected interrupts | ✅ | E27 audit |
+| PARALLEL_BB R1-R4 | Steal tuning | — | moot while stealing is off |
+| PARALLEL_BB R6 / UG | Never kill the donor | ❌ | equals BRANCHING E4 above |
+
+Queue (cheap and high value first):
+1. CFADS #2(a) more leaves (one flag).
+2. BRANCHING E5 proof-phase leaf settings (one flag).
+3. BRANCHING E4 hedged re-split (tests and an audit, as for E27/E28).
+4. CFADS #4 final-years block bound.
+5. GAP #2 persistent outer LP tree.
+6. The HiGHS dynamic-cutoff fork.
