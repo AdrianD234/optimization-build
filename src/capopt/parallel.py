@@ -154,7 +154,8 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
     return Node(model.user(obj), splits, cand[:32])
 
 
-def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None) -> tuple[Node | None, Node | None]:
+def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None,
+            cutoff: float = np.inf) -> tuple[Node | None, Node | None]:
     """The two children of `node`. Default: split on the top-scored fractional candidate (fractionality x spend).
     E11 (sb_candidates=k): strong branching. Solve both child LPs of the top k candidates and keep the split with
     the best product of bound gains (an infeasible child scores infinite: that split is a fixing). The gap anatomy study
@@ -169,15 +170,19 @@ def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None) -> tupl
                    for p, s in cands]
     else:
         results = [f.result() for f in [pool.submit(_sb_task, node.splits, p, s) for p, s in cands]]
-    return _sb_pick(node, results)
+    return _sb_pick(node, results, cutoff)
 
 
-def _sb_pick(node: Node, results) -> tuple[Node | None, Node | None]:
-    """The candidate (pair of child nodes) with the best product of bound gains, first one wins ties."""
+def _sb_pick(node: Node, results, cutoff: float = np.inf) -> tuple[Node | None, Node | None]:
+    """The candidate (pair of child nodes) with the best product of bound gains, first one wins ties.
+    E22: each gain is capped at the node's distance to the cutoff. A child past the cutoff is pruned however far
+    past it lands; uncapped, such overshoots inflated the product and picked weak splits on the CFADS scenarios
+    (docs/research/CFADS_BOUND_STALL.md)."""
     eps = 1e-6 + 1e-12 * abs(node.bound)
+    cap = max(eps, cutoff - node.bound) if np.isfinite(cutoff) else np.inf
     best, best_score = None, -1.0
     for kids in results:
-        gains = [np.inf if c is None else max(eps, c.bound - node.bound) for c in kids]
+        gains = [cap if c is None else min(cap, max(eps, c.bound - node.bound)) for c in kids]
         score = gains[0] * gains[1]
         if score > best_score:
             best, best_score = kids, score
@@ -206,7 +211,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
         if not node.frac:  # LP integral: nothing to split on; keep as a leaf
             done.append(node)
             continue
-        for child in _branch(model, node, sb_candidates, pool):
+        for child in _branch(model, node, sb_candidates, pool, cutoff):
             if child is None or child.bound >= cutoff:
                 pruned += 1
                 continue
@@ -234,7 +239,7 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
                 batch.append(node)
         futs = [[pool.submit(_sb_task, n.splits, p, s) for _, p, s in n.frac[:k]] for n in batch]
         for node, fl in zip(batch, futs):
-            for child in _sb_pick(node, [f.result() for f in fl]):
+            for child in _sb_pick(node, [f.result() for f in fl], cutoff):
                 if child is None or child.bound >= cutoff:
                     pruned += 1
                     continue
@@ -623,7 +628,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     if not node.frac:  # LP integral yet the MIP is open: let it run to the end
                         heapq.heappush(heap, (max(b, r["bound"]), seq, splits, None)); seq += 1; continue
                     resplits += 1
-                    for child in _branch(model, node, sb_candidates, sb_pool):
+                    for child in _branch(model, node, sb_candidates, sb_pool, tol()):
                         if child is not None:  # E1: a child keeps at least its parent's proven bound
                             heapq.heappush(heap, (max(child.bound, r["bound"]), seq, child.splits, nxt)); seq += 1
                 else:
