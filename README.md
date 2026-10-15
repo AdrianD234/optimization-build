@@ -5,7 +5,7 @@ capopt is an open-source optimiser for the capital-programme scheduling MILP in 
 * `benchmark_pack/` is the problem set: instances, formulation, the referee (`reference/evaluate.py`), best-known solutions and MindOpt's benchmark times. It is read-only, and the tests hash-check it.
 * `src/capopt/` is the optimiser (see [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md) for the architecture and roadmap).
 * `benchmarks/` holds experiment scripts, stored runs, and the generated [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md).
-* `docs/research/` holds the literature reviews behind the roadmap: [MILP frontier](docs/research/MILP_FRONTIER.md) and [AI-for-maths results](docs/research/AI_MATH_RESULTS.md).
+* `docs/research/` holds the literature reviews behind the roadmap: [MILP frontier](docs/research/MILP_FRONTIER.md), [AI-for-maths results](docs/research/AI_MATH_RESULTS.md) and [MindOpt hybrids and cross-field techniques](docs/research/HYBRID_AND_CROSSFIELD.md).
 * `tools/` holds the scripts that exported the pack, kept for provenance.
 
 ## How capopt works
