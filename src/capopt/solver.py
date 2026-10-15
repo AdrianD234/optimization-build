@@ -89,7 +89,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
           leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0, cutoff_after: float | None = None,
           sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None,
-          lns_after_rampup: bool = False, lns_patience: float | None = None) -> Result:
+          lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = False) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -154,7 +154,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                            lns_workers=lns_workers, lns_seconds=lns_seconds, cut_rounds=cut_rounds,
                            quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed,
                            cutoff_after=cutoff_after, sb_candidates=sb_candidates, lns_big=lns_big,
-                           lns_after_rampup=lns_after_rampup, lns_patience=lns_patience)
+                           lns_after_rampup=lns_after_rampup, lns_patience=lns_patience, lns_alns=lns_alns)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven
