@@ -255,3 +255,85 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 
 * Per-kind yield (wins per sub-MIP minute, pooled): start-time windows are the most productive by about 2x; random subsets, active-year windows and big-project moves come next; cash hot spots are the weakest.
 * **Verdict**: a 28% lower median and a halved worst case. ALNS becomes the default (`lns_alns=True`). Against COPT's logged 56 s this setup is at 1.5-2.5x, from 2.3-4.7x before.
+
+## KPI pass 1: the six COPT-timed scenarios (s1500 set aside)
+
+Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 ALNS workers after the ramp-up with 15 s patience; cutoff after 60 s; strong branching k = 4; big-project LNS; idle LP trees), one seed, time limit 1.5x COPT's logged time (at least 300 s, at most 900 s).
+
+| Scenario | COPT logged (warm) | capopt | Gap at the limit | Final schedule vs the CPO's |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | **proven in 106 s** | - | -1.27e-4 |
+| s2000_P50 | 108 s | not proven by 300 s | 1.5e-5 | -1.39e-4 |
+| cfadsds_P50 | 272 s | not proven by 408 s | 3.0e-4 | -7.2e-6 |
+| cfadsds_P95 | 433 s | not proven by 690 s | 1.9e-3 | 0 (no improvement) |
+| cfadsds_P50high | 491 s | not proven by 737 s | 9.1e-5 | -5.8e-6 |
+| cfadsds_P95high | 1,770 s | not proven by 938 s | 1.8e-3 | 0 (no improvement) |
+
+* The s2000 scenarios are close (one proof; the other 1.5x above the target gap).
+* The CFADS-after-debt-service scenarios are **bound-limited**. Their schedules match or beat the CPO's early (stable by 63-86 s), but their ramp-ups prune only 2-10 nodes (about 150 on s2000), and a few depth-5 to 9 leaves hold the global bound for the whole run.
+
+### E21: re-splitting stuck leaves on a bound-limited scenario (cfadsds_P50)
+
+* With `slice_seconds`, a leaf still open after its slice returns to the master, which re-splits it (with strong branching, k = 4); the children go back into the queue with a 1.5x longer slice. Idle workers can then take over hard subtrees instead of sitting idle while a few leaves hold the bound.
+* **Result** (KPI pass 1 setup plus slicing, seed 0, 408 s limit; KPI pass 1 had gap 3.0e-4 at 408 s; COPT logged 272 s):
+
+| Slice | Re-splits | Proof of 1e-5 |
+|---|---|---|
+| 30 s | 24 | 307 s |
+| **60 s** | 4 | **197 s (0.72x COPT)** |
+
+* **Verdict**: capopt's first win against COPT's logged time on a scenario. KPI pass 2 repeats all six scenarios with 60 s slices.
+
+## KPI pass 2: 60 s re-split slices (stopped after five scenarios)
+
+| Scenario | COPT logged | KPI pass 1 | **KPI pass 2 (slice 60 s)** | vs COPT |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | proven 106 s | proven 177 s (weaker schedule this seed) | 3.2x |
+| s2000_P50 | 108 s | gap 1.5e-5 at 300 s | gap 1.7e-5 at 300 s | - |
+| cfadsds_P50 | 272 s | gap 3.0e-4 at 408 s | **proven 235 s** (E21: 197 s) | **0.86x** |
+| cfadsds_P50high | 491 s | gap 9.1e-5 at 737 s | **proven 247 s** | **0.50x** |
+| cfadsds_P95 | 433 s | gap 1.9e-3 at 690 s | not proven, stopped at 389 s (bug) | - |
+
+* cfadsds_P95 exposed three bugs. KPI pass 2 was stopped before cfadsds_P95high, which carried the same problem.
+  1. **Time budget counted twice.** A surviving last year got `time_limit - elapsed` *and* the shared start time, so it ran with T - 2 x elapsed. L = 42 was proven at 261 s; its survivor L = 43 then had only 128 s.
+  2. **Survivors ran with default settings** (no slicing, no strong branching, no cutoff).
+  3. **LNS was dead.** The CPO schedule ends in L = 43, but the solver started with L0 = 42, where 7 of the warm schedule's start years are not options. Every neighbourhood fixing any of them was infeasible: about 11,000 sub-MIPs, 212 real solves, 0 improvements.
+* **Fixes**: the absolute time limit is passed through; survivors get the same tree settings with the cutoff from the start; a warm start's own last year is solved first; LNS frees any project whose incumbent start is not an option of the current model. A regression test covers the late-warm-start case.
+
+## KPI pass 3: the P95 scenarios with the fixes
+
+| Scenario | COPT logged | Result (60 s slices, fixes in) |
+|---|---|---|
+| cfadsds_P95 | 433 s | not proven by 669 s: L = 43 (the warm schedule's) at gap 1.6e-3 after 650 s; LNS now works (32 wins, schedule 1.5e-6 better than the CPO's) |
+| cfadsds_P95high | 1,770 s | **L = 43 proven at 893 s**; L = 42 got the last 17 s, so the whole problem is not proven (gap 1.6e-3 from L = 42) |
+
+* On the P95 scenarios both L = 42 and L = 43 are hard. They are solved one after the other, so the second never gets enough time.
+* The research report `docs/research/CFADS_BOUND_STALL.md` explains the stall. The CFADS funding stream (0.5-1.64x its mean, binding in 29 of 38 years) spreads the gap over many projects. The default branching rule and 4-candidate strong branching miss the good splits. The product score is inflated by children that overshoot the cutoff. E22 tests the report's top rule.
+
+### E22: strong-branching gains capped at the distance to the cutoff (cfadsds_P95)
+
+* `_sb_pick` caps each child's gain at the cutoff minus the node bound (the research report's rule #1), and the cutoff is passed through the ramp-up and re-split. Setup: KPI pass 3 plus k = 16; 650 s limit; COPT logged 433 s.
+
+| Arm | Ramp-up | L = 43 proven | Whole problem proven |
+|---|---|---|---|
+| KPI pass 3 (k = 4, uncapped) | - | not by 650 s (gap 1.6e-3) | no |
+| **A: k = 16, capped** | 89 s, 16 pruned | 349 s | **593 s** (1.37x COPT) |
+| B: A plus 5 rounds of root cover cuts (103 cuts) | 99 s | 347 s | 586 s |
+
+* **Verdict**: the capped rule turns an unprovable instance into a proof. Root cuts add nothing measurable. E23 makes k automatic, 16 when the root LP has more than 15 fractional projects (cfadsds: 21-22; s2000: 11), else 4, because a 16-candidate ramp-up costs about 90 s that s2000 does not need. The batched ramp-up now expands enough nodes per round to give the pool about twice as many tasks as workers.
+
+## KPI pass 4: automatic strong-branching candidates (E23), all six scenarios
+
+Setup: KPI pass 2 (warm start, 16 ALNS workers after the ramp-up with 15 s patience, cutoff after 60 s, 60 s re-split slices, big-project LNS, idle LP trees) with `sb_candidates=-1` (auto) and the KPI pass 2 fixes. One seed. Time limit 1.5x COPT (at least 300 s, at most 900 s), except cfadsds_P95high at 1,800 s.
+
+| Scenario | COPT logged (warm) | capopt | Ratio | Notes |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | **proven 107 s** | 1.91 | k = 4 |
+| s2000_P50 | 108 s | gap 2.2e-5 at 300 s | at least 2.6 | primal-limited: the schedule was still improving at 296 s |
+| cfadsds_P50 | 272 s | **proven 172 s** | **0.63** | k = 16, 65 pruned in the ramp-up (9 before) |
+| cfadsds_P95 | 433 s | **proven 658 s** | 1.52 | L = 43 at 480 s, then L = 42 |
+| cfadsds_P50high | 491 s | **proven 218 s** | **0.44** | |
+| cfadsds_P95high | 1,770 s | **proven 546 s** | **0.31** | L = 43 at 369 s, then L = 42 |
+
+* **Primary KPI** (shifted geometric mean of capopt time / COPT time, 10 s shift), with s2000_P50 counted at its 300 s limit: **0.93**. This is a lower bound, because s2000_P50 was not proven, and it is a single seed; the KPI rule needs the median of 3 seeds.
+* capopt now beats COPT's logged time on three of the six scenarios: the CFADS P50, P50high and P95high cases. The s2000 pair is primal-limited: LNS only starts after the 25 s ramp-up, then reaches -1.2e-4 within about 10 s (E24).

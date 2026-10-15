@@ -163,7 +163,7 @@ def test_strong_branching_ramp_up_and_resplit_match_brute_force(tmp_path):
     path = write_instance(tmp_path, raw)
     bf, _ = S.brute_force(I.from_dict(raw))
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=6, slice_seconds=0.3, quick_seconds=0,
-                     sb_candidates=5)
+                     sb_candidates=-1)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
 
 
@@ -221,3 +221,28 @@ def test_lns_patience_hands_workers_back_and_still_proves(tmp_path):
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=2, lns_seconds=30, lns_patience=0.5)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
     assert r.seconds < 30
+
+
+def test_warm_start_in_a_later_last_year_is_solved_first_and_still_proves(tmp_path):
+    """Regression (KPI pass 2): a warm schedule ending after L0 broke LNS on L0 and the survivors' time budget."""
+    import json
+    raw = S.tiny(6, 10, 100, 23, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, _ = S.brute_force(inst)
+    L0 = inst.min_last_year()
+    from capopt.evaluate import evaluate
+    late = None
+    rng = np.random.default_rng(0)
+    for _ in range(4000):  # a feasible schedule whose last build year is after L0
+        st = rng.integers(0, inst.T, size=inst.n)
+        ev = evaluate(inst, st)
+        if ev["feasible"] and ev["last_build_year_index"] > L0:
+            late = st
+            break
+    assert late is not None
+    sol = tmp_path / "late.json"
+    sol.write_text(json.dumps({"starts": inst.starts_to_dict(late)}), encoding="utf-8")
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2, warm_start=str(sol))
+    assert any("solved first" in line for line in r.log)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)

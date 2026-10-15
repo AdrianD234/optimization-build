@@ -146,11 +146,17 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             best_obj, best_starts = float(ev["objective"]), st
             trace.append((time.time() - t0, best_obj))
             log.append(f"warm start: objective {best_obj:.6f}")
+            Lw = int(ev["last_build_year_index"])
+            if others and Lw in others:  # solve the warm schedule's own last year first: LNS can work around it
+                L_order = [Lw]
+                others = [L for L in range(L0, inst.T) if L != Lw]
+                queue = list(others)
+                log.append(f"warm start ends in L={Lw}: solved first")
         else:
             log.append("warm start: infeasible for this instance, ignored")
     proven_all = True
     for L in L_order:
-        r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit - (time.time() - t0),
+        r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit,  # relative to the shared t0
                            incumbent=best_starts, t0=t0, idle=idle, slice_seconds=slice_seconds,
                            lns_workers=lns_workers, lns_seconds=lns_seconds, cut_rounds=cut_rounds,
                            quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed,
@@ -170,9 +176,11 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     for L in others:
         status[L] = "pruned (LP)" if L not in survivors else status.get(L, "open")
     for L in survivors:
-        r = solve_parallel(name, L, workers, n_leaves, encoding, balance, max(1.0, time_limit - (time.time() - t0)),
+        # a surviving last year is a pure proof against a good incumbent: same tree settings, cutoff from the start
+        # (time_limit is relative to the shared t0; subtracting the elapsed time here used to count it twice)
+        r = solve_parallel(name, L, workers, n_leaves, encoding, balance, max(time.time() - t0 + 1.0, time_limit),
                            incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
-                           rel_gap=rel_gap)
+                           rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates)
         log.append(f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s")
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

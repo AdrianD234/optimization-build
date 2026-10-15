@@ -88,6 +88,7 @@ class Node:
     bound: float
     splits: list[Split] = field(compare=False)
     frac: list[tuple[float, int, int]] = field(compare=False, default_factory=list)  # (score, p, s) candidates
+    n_frac: int = field(compare=False, default=0)  # projects fractional in the LP (all of them, not just the top 32)
 
 
 _LP_CACHE: dict[int, tuple[highspy.Highs, int]] = {}
@@ -151,10 +152,11 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(model.user(obj), splits, cand[:32])
+    return Node(model.user(obj), splits, cand[:32], len({p for _, p, _ in cand}))
 
 
-def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None) -> tuple[Node | None, Node | None]:
+def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None,
+            cutoff: float = np.inf) -> tuple[Node | None, Node | None]:
     """The two children of `node`. Default: split on the top-scored fractional candidate (fractionality x spend).
     E11 (sb_candidates=k): strong branching. Solve both child LPs of the top k candidates and keep the split with
     the best product of bound gains (an infeasible child scores infinite: that split is a fixing). The gap anatomy study
@@ -169,15 +171,19 @@ def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None) -> tupl
                    for p, s in cands]
     else:
         results = [f.result() for f in [pool.submit(_sb_task, node.splits, p, s) for p, s in cands]]
-    return _sb_pick(node, results)
+    return _sb_pick(node, results, cutoff)
 
 
-def _sb_pick(node: Node, results) -> tuple[Node | None, Node | None]:
-    """The candidate (pair of child nodes) with the best product of bound gains, first one wins ties."""
+def _sb_pick(node: Node, results, cutoff: float = np.inf) -> tuple[Node | None, Node | None]:
+    """The candidate (pair of child nodes) with the best product of bound gains, first one wins ties.
+    E22: each gain is capped at the node's distance to the cutoff. A child past the cutoff is pruned however far
+    past it lands; uncapped, such overshoots inflated the product and picked weak splits on the CFADS scenarios
+    (docs/research/CFADS_BOUND_STALL.md)."""
     eps = 1e-6 + 1e-12 * abs(node.bound)
+    cap = max(eps, cutoff - node.bound) if np.isfinite(cutoff) else np.inf
     best, best_score = None, -1.0
     for kids in results:
-        gains = [np.inf if c is None else max(eps, c.bound - node.bound) for c in kids]
+        gains = [cap if c is None else min(cap, max(eps, c.bound - node.bound)) for c in kids]
         score = gains[0] * gains[1]
         if score > best_score:
             best, best_score = kids, score
@@ -206,7 +212,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
         if not node.frac:  # LP integral: nothing to split on; keep as a leaf
             done.append(node)
             continue
-        for child in _branch(model, node, sb_candidates, pool):
+        for child in _branch(model, node, sb_candidates, pool, cutoff):
             if child is None or child.bound >= cutoff:
                 pruned += 1
                 continue
@@ -234,7 +240,7 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
                 batch.append(node)
         futs = [[pool.submit(_sb_task, n.splits, p, s) for _, p, s in n.frac[:k]] for n in batch]
         for node, fl in zip(batch, futs):
-            for child in _sb_pick(node, [f.result() for f in fl]):
+            for child in _sb_pick(node, [f.result() for f in fl], cutoff):
                 if child is None or child.bound >= cutoff:
                     pruned += 1
                     continue
@@ -349,6 +355,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
     size = 25
     found, tries, wins = [], 0, 0
     big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
+    opt_sets = [set(int(x) for x in o) for o in model.options]
     base_kinds = 4 if inst.penalised else 3
     n_kinds = base_kinds + (1 if big else 0)
     weights = np.ones(n_kinds)
@@ -398,6 +405,8 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             idx = np.nonzero(free)[0] if free.sum() > size + 15 else np.arange(inst.n)
             free = np.zeros(inst.n, dtype=bool)
             free[rng.choice(idx, size=min(size, len(idx)), replace=False)] = True
+        # projects whose incumbent start is not an option of this last year's model must be free, or fixing fails
+        free = free | np.array([int(cur[q]) not in opt_sets[q] for q in range(inst.n)])
         h = _highs(model, _fix_others(cur, free), False, min(limit, max(0.1, deadline - time.time())), int(seed + tries))
         tries += 1
         if h is None:
@@ -481,7 +490,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         with a good warm start, when early LNS matters less).
     lns_patience (E18): an LNS worker joins the tree once the incumbent has not improved for this many seconds.
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
-    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
+    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
+        16 when the root has more than 15 fractional projects, else 4). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
         callback either way; exp05 found the static bound can steer HiGHS' search badly.
@@ -555,7 +565,12 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
         free = workers if lns_after_rampup else workers - lns_workers
         sb_pool = pool if free >= 2 else None  # never queue behind LNS tasks that run for minutes
-        width = max(1, free // max(1, sb_candidates))
+        if sb_candidates < 0:  # E23 auto: 16 candidates when the root LP smears many projects (CFADS), else 4
+            root = _lp_node(model, [])
+            n_frac = root.n_frac if root is not None else 0
+            sb_candidates = 16 if n_frac > 15 else 4
+            log.append(f"strong branching: {sb_candidates} candidates ({n_frac} fractional projects at the root)")
+        width = max(1, -(-2 * free // max(1, sb_candidates)))  # E23: about 2x the free workers in tasks per round
         leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates, sb_pool, width)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         if lns_after_rampup:
@@ -620,7 +635,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     if not node.frac:  # LP integral yet the MIP is open: let it run to the end
                         heapq.heappush(heap, (max(b, r["bound"]), seq, splits, None)); seq += 1; continue
                     resplits += 1
-                    for child in _branch(model, node, sb_candidates, sb_pool):
+                    for child in _branch(model, node, sb_candidates, sb_pool, tol()):
                         if child is not None:  # E1: a child keeps at least its parent's proven bound
                             heapq.heappush(heap, (max(child.bound, r["bound"]), seq, child.splits, nxt)); seq += 1
                 else:
