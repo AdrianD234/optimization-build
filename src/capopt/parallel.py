@@ -331,9 +331,12 @@ def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
     return out
 
 
-def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> dict:
+def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big: bool = False) -> dict:
     """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
-    rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes."""
+    rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes.
+    big (E13): add a big-project neighbourhood. Free 1-3 of the largest projects (top 10% by spend) plus a random
+    set of others, with a 3x longer sub-MIP limit. The gap anatomy study found the optimum moves a few big, long
+    projects by 1-19 years, which the window and hot-spot neighbourhoods rarely allow."""
     _load_cuts()
     model: Model = _W["model"]
     inst = model.inst
@@ -341,6 +344,8 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> d
     deadline = time.time() + seconds
     size = 25
     found, tries, wins = [], 0, 0
+    big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
+    base_kinds = 4 if inst.penalised else 3
     while time.time() < deadline and not _W["stop"].value:
         if _W["best_val"].value == np.inf:
             time.sleep(0.2)
@@ -348,8 +353,14 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> d
         with _W["lock"]:
             cur = np.array(_W["best_starts"][:], dtype=np.int64)
             cur_val = _W["best_val"].value
-        kind = rng.integers(4) if inst.penalised else rng.integers(3)
-        if kind == 3:  # cash hot spot: projects active around a year whose cash sits in the expensive tiers
+        kind = int(rng.integers(base_kinds + (1 if big else 0)))
+        limit = sub_limit
+        if kind == base_kinds:  # E13: big projects plus a random set of others
+            free = np.zeros(inst.n, dtype=bool)
+            free[rng.choice(inst.n, size=min(size, inst.n), replace=False)] = True
+            free[rng.choice(big_ids, size=int(rng.integers(1, 4)), replace=False)] = True
+            limit = 3 * sub_limit
+        elif kind == 3:  # cash hot spot: projects active around a year whose cash sits in the expensive tiers
             ev = evaluate(inst, cur)
             if ev["feasible"]:
                 closing = np.asarray(ev["closing_balance_units"][:ev["last_build_year_index"]], dtype=float)
@@ -371,11 +382,11 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> d
             a = int(rng.integers(0, int(cur.max()) + 1))
             ends = cur + inst.last_nz
             free = (cur <= a + 2) & (ends >= a)
-        if free.sum() < 5 or free.sum() > size + 15:
+        if kind != base_kinds and (free.sum() < 5 or free.sum() > size + 15):
             idx = np.nonzero(free)[0] if free.sum() > size + 15 else np.arange(inst.n)
             free = np.zeros(inst.n, dtype=bool)
             free[rng.choice(idx, size=min(size, len(idx)), replace=False)] = True
-        h = _highs(model, _fix_others(cur, free), False, min(sub_limit, max(0.1, deadline - time.time())), int(seed + tries))
+        h = _highs(model, _fix_others(cur, free), False, min(limit, max(0.1, deadline - time.time())), int(seed + tries))
         tries += 1
         if h is None:
             continue
@@ -424,7 +435,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
-                   cutoff_after: float | None = None, sb_candidates: int = 0) -> ParallelResult:
+                   cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -442,6 +453,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     E1: each running leaf has a slot in a shared array where its worker writes its live dual bound, so the global bound
         (and the streamed gap) is exact rather than frozen at launch values; re-split children inherit the parent's
         bound; the log ends with a census of the leaves whose bounds were worst.
+    lns_big (E13): LNS also uses the big-project neighbourhood (see _lns_task).
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
@@ -504,7 +516,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
         # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
-        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0) for i in range(lns_workers)]
+        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big) for i in range(lns_workers)]
         if cut_rounds:
             from .cuts import cut_row, root_loop
             bounds, cuts = root_loop(model, cut_rounds)

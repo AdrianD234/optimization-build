@@ -190,3 +190,11 @@ def test_node_lp_never_prunes_on_a_time_limit(instances, monkeypatch):
     again = P._lp_node(model, [])
     assert again is not None and again.bound == pytest.approx(root.bound, rel=1e-9)
     P._LP_CACHE.clear()
+
+
+def test_big_project_lns_matches_brute_force(tmp_path):
+    raw = S.tiny(6, 9, 100, 13, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=2, lns_seconds=2, lns_big=True)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
