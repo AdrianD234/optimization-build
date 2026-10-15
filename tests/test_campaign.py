@@ -223,3 +223,16 @@ def test_launch_verify_then_kill_is_detected_as_stalled(tmp_path):
         time.sleep(0.1)
     st = C.status(cdir)
     assert st["state"] == "STALLED" and "not running" in st["reason"]
+
+
+def test_load_tag_flags_contended_runs(tmp_path):
+    log = tmp_path / "load.csv"
+    log.write_text("unix_time,other_cores,python_cores,excel_cores,free_gb\n"
+                   "100,0.5,19.0,0.0,8.0\n110,0.7,19.0,0.0,7.5\n120,6.0,14.0,5.5,6.0\n200,0.1,0.0,0.0,9.0\n",
+                   encoding="utf-8")
+    quiet = C.load_tag(95, 115, log)
+    assert quiet == {"samples": 2, "other_cores_mean": 0.6, "other_cores_peak": 0.7, "free_gb_min": 7.5,
+                     "contended": False}
+    busy = C.load_tag(95, 125, log)
+    assert busy["contended"] and busy["other_cores_peak"] == 6.0
+    assert C.load_tag(300, 400, log) is None and C.load_tag(0, 1, tmp_path / "missing.csv") is None
