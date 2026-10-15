@@ -467,7 +467,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
                    cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False,
                    lns_after_rampup: bool = False, lns_patience: float | None = None,
-                   lns_alns: bool = False) -> ParallelResult:
+                   lns_alns: bool = False, lns_first: float = 0.0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -489,6 +489,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_after_rampup (E15): submit the LNS workers only after the ramp-up, so strong branching has the whole pool (useful
         with a good warm start, when early LNS matters less).
     lns_patience (E18): an LNS worker joins the tree once the incumbent has not improved for this many seconds.
+    lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
         16 when the root has more than 15 fractional projects, else 4). E12: the
@@ -557,6 +558,16 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         def start_lns() -> list:
             return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns)
                     for i in range(lns_workers)]
+        if lns_first > 0 and best_val.value < np.inf:  # E24: every worker on LNS first, then the ramp-up
+            burst = [pool.submit(_lns_task, lns_first, 5000 + i + 7919 * seed, t0, 3.0, lns_big, None, lns_alns)
+                     for i in range(workers)]
+            wins = 0
+            for f in burst:
+                r = f.result()
+                trace.extend(r["found"])
+                wins += r["wins"]
+            log.append(f"lns burst: {workers} workers x {lns_first:.0f}s, {wins} improvements, "
+                       f"{time.time() - t0:.1f}s")
         lns = [] if lns_after_rampup else start_lns()
         if cut_rounds:
             from .cuts import cut_row, root_loop
