@@ -123,6 +123,19 @@ def test_overdue_run_is_stalled(tmp_path):
     assert st["state"] == "STALLED" and "past its 10s limit" in st["reason"]
 
 
+def test_per_run_time_limit_overrides_the_spec_and_the_overdue_check(tmp_path):
+    spec = C.load_spec(write_spec(tmp_path, name="c2", runner="capopt.campaign:sleep_runner", time_limit=5,
+                                  runs=[{"instance": "a", "seconds": 0.01}, {"instance": "b", "seconds": 0.01,
+                                                                             "time_limit": 777}]))
+    data = C.run(spec, tmp_path / "c2", heartbeat_s=0.05)
+    assert data["done"] == 2
+    long_run = dict(index=1, config=None, instance="b", seed=0, started_at=time.time() - 400, time_limit=777.0)
+    fake_progress(tmp_path / "p", time_limit=10.0, current=long_run)
+    assert C.status(tmp_path / "p")["state"] == "RUNNING"
+    fake_progress(tmp_path / "q", time_limit=10.0, current=dict(long_run, time_limit=10.0))
+    assert C.status(tmp_path / "q")["state"] == "STALLED"
+
+
 def test_complete_and_failed(tmp_path):
     fake_progress(tmp_path / "a", state="complete", done=4, current=None, pid=999_999_999)
     assert C.status(tmp_path / "a")["state"] == "COMPLETE"  # a finished runner may be gone: that's fine
