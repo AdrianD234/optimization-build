@@ -43,6 +43,18 @@ capopt bench --configs capopt_parallel --seeds 0,1,2      # store benchmark runs
 capopt report                                             # regenerate benchmarks/BENCHMARK.md
 ```
 
+## Running long benchmarks
+
+Long benchmark runs go through a **campaign**, which keeps a heartbeat and can't die unnoticed:
+
+```bash
+capopt campaign launch --spec my_campaign.json   # detached runner, verified heartbeat within 60 s
+capopt watch my_campaign                         # one line per state change: STARTED / PROGRESS / STALLED / COMPLETE
+capopt status my_campaign                        # % done, current run, ETA; exit 1 if STALLED / NOT_STARTED / FAILED
+```
+
+A campaign is STALLED when its heartbeat is 5 minutes old, its runner process is gone, or a run outlives its time limit. Agents must follow the runbook in [docs/MASTER_PLAN.md §7](docs/MASTER_PLAN.md#running-long-benchmarks-agent-runbook): never start long jobs with bare `&` from a shell tool, always arm `capopt watch`, and never leave a run unobserved for more than 5 minutes.
+
 ## Status
 
 See [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md) for current numbers against MindOpt, and [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) for the experiment log.

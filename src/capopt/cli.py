@@ -1,4 +1,4 @@
-"""Command line: capopt solve | bench | report."""
+"""Command line: capopt solve | bench | report | campaign | status | watch."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import bench, solver
+from . import bench, campaign, solver
 from . import instance as I
 
 
@@ -27,7 +27,42 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--no-isolate", action="store_true", help="run in this process (no watchdog subprocess)")
     b.add_argument("--out-dir", default=str(bench.RESULTS))
     sub.add_parser("report", help="write benchmarks/BENCHMARK.md from stored runs")
+    c = sub.add_parser("campaign", help="long benchmark campaigns with heartbeat (run in foreground, or launch detached)")
+    c.add_argument("mode", choices=["run", "launch"], help="run: here, in the foreground; launch: detached + verified")
+    c.add_argument("--spec", required=True, help="campaign spec JSON (see capopt/campaign.py)")
+    c.add_argument("--root", default=str(campaign.RESULTS), help="folder holding campaign folders")
+    c.add_argument("--heartbeat", type=float, default=campaign.HEARTBEAT_S, help="heartbeat interval (s)")
+    c.add_argument("--verify", type=float, default=campaign.NOT_STARTED_S, help="launch: seconds to wait for a heartbeat")
+    for cmd, helptext in (("status", "campaign progress; exit 1 if STALLED / NOT_STARTED / FAILED"),
+                          ("watch", "print one line per campaign state change (arm with an agent's Monitor tool)")):
+        w = sub.add_parser(cmd, help=helptext)
+        w.add_argument("campaign", help="campaign name (under --root) or campaign folder")
+        w.add_argument("--root", default=str(campaign.RESULTS))
+        w.add_argument("--stale", type=float, default=campaign.STALE_S, help="seconds without heartbeat => STALLED")
+        if cmd == "watch":
+            w.add_argument("--interval", type=float, default=30.0)
     a = ap.parse_args(argv)
+    if a.cmd == "campaign":
+        if a.mode == "run":
+            spec = campaign.load_spec(a.spec)
+            data = campaign.run(spec, campaign.campaign_dir(spec["name"], Path(a.root)), a.heartbeat)
+            return 0 if data["state"] == "complete" else 1
+        try:
+            info = campaign.launch(a.spec, Path(a.root), a.verify, a.heartbeat)
+        except campaign.LaunchError as exc:
+            print(f"LAUNCH FAILED: {exc}", file=sys.stderr, flush=True)
+            return 1
+        print(f"LAUNCHED {info['campaign']}: {info['total']} runs, runner pid {info['pid']}, heartbeat verified after "
+              f"{info['verified_after']:.1f}s. Check with: capopt status {info['campaign']}  |  "
+              f"capopt watch {info['campaign']}", flush=True)
+        return 0
+    if a.cmd in ("status", "watch"):
+        cdir = Path(a.campaign) if Path(a.campaign).is_dir() else campaign.campaign_dir(a.campaign, Path(a.root))
+        if a.cmd == "status":
+            st = campaign.status(cdir, stale_s=a.stale)
+            print(campaign.describe(st), flush=True)
+            return 0 if st["state"] in campaign.OK_STATES else (2 if st["state"] == "NOT_LAUNCHED" else 1)
+        return campaign.watch(cdir, a.interval, emit=lambda line: print(line, flush=True), stale_s=a.stale)
     if a.cmd == "solve":
         r = solver.solve(a.instance, a.workers, a.time_limit, a.leaves)
         print(json.dumps({"instance": r.instance, "objective": r.objective, "proven": r.proven,

@@ -11,3 +11,5 @@ benchmark_pack.zip
 # numba cache
 *.nbi
 *.nbc
+# campaign progress temp files
+*.tmp
