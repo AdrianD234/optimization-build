@@ -179,10 +179,10 @@ def _add_start_block(b: MipBuilder, encoding: str, p_id: str, opts: np.ndarray, 
 def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step", balance: str = "recursive") -> Model:
     """Fixed-last-year model (see module docstring). L=None means T-1 (the exact model for no-penalty instances)."""
     L = inst.T - 1 if L is None else int(L)
-    if inst.n > inst.max_starts:
-        raise NotImplementedError("start-count rows are not needed for the benchmark instances (n <= max_starts)")
     hold = _holding_weights(inst)
     b = MipBuilder()
+    # at most max_starts projects start in any year (binds on the 233-project CPO instances; never on the pack's)
+    start_rows = [b.new_row(-INF, float(inst.max_starts)) for _ in range(L + 1)] if inst.n > inst.max_starts else []
     F = inst.F.astype(float)
     cumF = np.cumsum(F)
     env = np.maximum(0.0, F)
@@ -247,6 +247,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
                         if hold and t < L:
                             e[band_rows[t]] = -a
                 costs[jj] += float((x_cost_years[s:L + 1] * np.array([cs[min(t - s, len(cs) - 1)] for t in range(s, L + 1)])).sum())
+            if start_rows:
+                e[start_rows[s]] = 1.0
             entries.append(e)
         start_cols.append(_add_start_block(b, encoding, inst.ids[p], opts, costs, entries))
         options.append(opts)
@@ -320,6 +322,11 @@ def reference_bigm(inst: Instance) -> Model:
                     b.row(0.0, INF, [y[s + k], c], [1.0, -1.0])  # active link
         b.row(1.0, 1.0, cols, [1.0] * len(cols))
         options.append(opts); start_cols.append(cols)
+    if inst.n > inst.max_starts:  # start-count cap per year (as in the reference model)
+        for t in range(T):
+            cols = [c for opts, cs in zip(options, start_cols) for s, c in zip(opts, cs) if s == t]
+            if len(cols) > inst.max_starts:
+                b.row(-INF, float(inst.max_starts), cols, [1.0] * len(cols))
 
     def fill(x: np.ndarray, starts: np.ndarray, ev: dict) -> None:
         last = ev["last_build_year_index"]

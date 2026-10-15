@@ -11,3 +11,6 @@ benchmark_pack.zip
 # numba cache
 *.nbi
 *.nbc
+
+# Private data derived from the (private) Capital Programme Optimiser repo: never publish
+private/

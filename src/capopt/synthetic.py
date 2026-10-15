@@ -66,6 +66,8 @@ def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     best, arg = np.inf, None
     for idx in np.ndindex(*sizes):
         st = np.array([inst.allowed[p][j] for p, j in enumerate(idx)], dtype=np.int64)
+        if np.bincount(st, minlength=inst.T).max() > inst.max_starts:
+            continue
         v = K.cost(pk, st, inst.penalised)
         if v < best:
             best, arg = v, st

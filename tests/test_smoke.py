@@ -95,3 +95,19 @@ def test_quick_try_finishes_easy_instances_before_the_pool(tmp_path):
     r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, quick_seconds=5, cut_rounds=3)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
     assert any("quick try: Optimal" in line for line in r.log)
+
+
+@pytest.mark.parametrize("cap", [1, 2])
+def test_start_cap_is_respected_and_optimal(tmp_path, cap):
+    raw = S.tiny(5, 8, 100, 3, True)
+    raw["max_starts_per_year"] = cap
+    raw["name"] += f"_cap{cap}"
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, _ = S.brute_force(inst)
+    for r in (solver.solve_sequential(str(path), time_limit=30),
+              solver.solve(str(path), workers=2, time_limit=60, n_leaves=4),
+              solver.solve_reference_highs(str(path), time_limit=60, threads=1)):
+        assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+        st = inst.starts_from_dict(r.starts)
+        assert np.bincount(st, minlength=inst.T).max() <= cap
