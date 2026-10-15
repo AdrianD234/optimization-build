@@ -321,3 +321,19 @@ Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 A
 | B: A plus 5 rounds of root cover cuts (103 cuts) | 99 s | 347 s | 586 s |
 
 * **Verdict**: the capped rule turns an unprovable instance into a proof. Root cuts add nothing measurable. E23 makes k automatic, 16 when the root LP has more than 15 fractional projects (cfadsds: 21-22; s2000: 11), else 4, because a 16-candidate ramp-up costs about 90 s that s2000 does not need. The batched ramp-up now expands enough nodes per round to give the pool about twice as many tasks as workers.
+
+## KPI pass 4: automatic strong-branching candidates (E23), all six scenarios
+
+Setup: KPI pass 2 (warm start, 16 ALNS workers after the ramp-up with 15 s patience, cutoff after 60 s, 60 s re-split slices, big-project LNS, idle LP trees) with `sb_candidates=-1` (auto) and the KPI pass 2 fixes. One seed. Time limit 1.5x COPT (at least 300 s, at most 900 s), except cfadsds_P95high at 1,800 s.
+
+| Scenario | COPT logged (warm) | capopt | Ratio | Notes |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | **proven 107 s** | 1.91 | k = 4 |
+| s2000_P50 | 108 s | gap 2.2e-5 at 300 s | at least 2.6 | primal-limited: the schedule was still improving at 296 s |
+| cfadsds_P50 | 272 s | **proven 172 s** | **0.63** | k = 16, 65 pruned in the ramp-up (9 before) |
+| cfadsds_P95 | 433 s | **proven 658 s** | 1.52 | L = 43 at 480 s, then L = 42 |
+| cfadsds_P50high | 491 s | **proven 218 s** | **0.44** | |
+| cfadsds_P95high | 1,770 s | **proven 546 s** | **0.31** | L = 43 at 369 s, then L = 42 |
+
+* **Primary KPI** (shifted geometric mean of capopt time / COPT time, 10 s shift), with s2000_P50 counted at its 300 s limit: **0.93**. This is a lower bound, because s2000_P50 was not proven, and it is a single seed; the KPI rule needs the median of 3 seeds.
+* capopt now beats COPT's logged time on three of the six scenarios: the CFADS P50, P50high and P95high cases. The s2000 pair is primal-limited: LNS only starts after the 25 s ramp-up, then reaches -1.2e-4 within about 10 s (E24).
