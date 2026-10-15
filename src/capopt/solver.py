@@ -20,7 +20,7 @@ import numpy as np
 from . import instance as I
 from .evaluate import evaluate
 from .formulation import last_year_model
-from .parallel import solve_parallel
+from .parallel import Node, _branch, _lp_node, solve_parallel
 from .solve import new_highs
 
 
@@ -35,6 +35,37 @@ class Result:
     trace: list[tuple[float, float]]
     last_years: dict[int, str] = field(default_factory=dict)  # L -> "solved" | "pruned (LP)" | "infeasible"
     log: list[str] = field(default_factory=list)
+
+
+class _LPTree:
+    """E16: a best-first LP tree for one last year L, grown one node at a time in the master's idle time, so a last
+    year whose root LP bound beats the incumbent can still be pruned without its own MIP solve."""
+
+    def __init__(self, inst: I.Instance, L: int, encoding: str, balance: str, max_expansions: int = 500):
+        self.model = last_year_model(inst, L, encoding, balance)
+        root = _lp_node(self.model, [])
+        self.heap: list[Node] = [] if root is None else [root]
+        self.expansions, self.max_expansions, self.stuck = 0, max_expansions, False
+
+    @property
+    def closed(self) -> bool:
+        return not self.heap and not self.stuck
+
+    def step(self, cutoff: float) -> None:
+        import heapq
+        while self.heap and self.heap[0].bound >= cutoff:
+            heapq.heappop(self.heap)
+        if not self.heap or self.stuck or self.expansions >= self.max_expansions:
+            return
+        node = heapq.heappop(self.heap)
+        if not node.frac:  # an LP-integral node that beats the cutoff: only the MIP can settle this last year
+            heapq.heappush(self.heap, node)
+            self.stuck = True
+            return
+        self.expansions += 1
+        for child in _branch(self.model, node):
+            if child is not None and child.bound < cutoff:
+                heapq.heappush(self.heap, child)
 
 
 def lp_bound(inst: I.Instance, L: int) -> float:
@@ -77,11 +108,32 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         others = list(range(L0 + 1, inst.T))
     lp: dict[int, float] = {}
     queue = list(others)
+    trees: dict[int, _LPTree] = {}
+    tree_pruned: set[int] = set()
 
     def idle(best: float) -> None:  # LP-bound one more last year while workers are busy
         if queue:
             L = queue.pop(0)
             lp[L] = lp_bound(inst, L)
+            return
+        if best == np.inf:
+            return
+        cut = best - rel_gap * abs(best)
+        for L in others:  # E16: grow an LP tree for a last year the root LP could not prune
+            if L in tree_pruned or lp.get(L, np.inf) >= cut:
+                continue
+            if L not in trees:
+                trees[L] = _LPTree(inst, L, encoding, balance)
+            tree = trees[L]
+            tree.step(cut)
+            if tree.closed:
+                tree_pruned.add(L)
+                lp[L] = max(lp[L], cut)
+                log.append(f"L={L}: pruned by an LP tree of {tree.expansions} expansions in idle time")
+                continue
+            if tree.stuck or tree.expansions >= tree.max_expansions:
+                continue
+            return
 
     best_obj, best_starts, dual, trace = np.inf, None, np.inf, []
     if warm_start is not None:
