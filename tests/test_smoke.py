@@ -78,3 +78,11 @@ def test_parallel_with_lns_and_resplitting_matches_brute_force(tmp_path):
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, slice_seconds=0.5, lns_workers=1, lns_seconds=2)
     assert r.proven
     assert r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_parallel_with_root_cuts_matches_brute_force(tmp_path):
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, cut_rounds=5)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)

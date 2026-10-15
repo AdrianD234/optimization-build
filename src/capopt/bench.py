@@ -53,6 +53,8 @@ CONFIGS: dict[str, tuple[str, str, Callable[..., solver.Result]]] = {
                        lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0)),
     "capopt_lns": ("I5", "+ 4 LNS workers around the shared incumbent (first 60 s)",
                    lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0, lns_workers=4, lns_seconds=60.0)),
+    "capopt_cuts": ("I6", "+ root cover cuts (30 rounds) on top of I4",
+                    lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0, cut_rounds=30)),
     "mindopt_cold": ("M", "MindOpt cold, live re-run (one solve at a time under the licence lock)", None),
 }
 # Runs that must never be killed by the watchdog: killing MindOpt mid-solve can lock the floating-licence seat.

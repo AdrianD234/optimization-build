@@ -140,9 +140,11 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
 _W: dict = {}
 
 
-def _init(best_val, best_starts, lock, stop, name, L, encoding, balance):
-    _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop,
-              model=last_year_model(I.load(name), L, encoding, balance))
+def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, extra_rows=()):
+    model = last_year_model(I.load(name), L, encoding, balance)
+    for lo, hi, cols, vals in extra_rows:  # root cuts computed once by the master
+        model.builder.row(lo, hi, cols, vals)
+    _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model)
 
 
 def _offer(starts: np.ndarray, obj: float) -> None:
@@ -273,7 +275,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    balance: str = "cumulative", time_limit: float = 900.0, incumbent: np.ndarray | None = None,
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
-                   lns_seconds: float = 30.0) -> ParallelResult:
+                   lns_seconds: float = 30.0, cut_rounds: int = 0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -282,6 +284,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     shared incumbent as its cutoff.
 
     lns_workers: that many workers run LNS around the shared incumbent for `lns_seconds` before joining the tree.
+    cut_rounds: rounds of the root cover-cut loop (cuts.py), run once by the master and shipped to every worker.
 
     idle: called with the current incumbent value whenever the master is waiting on workers (one small unit of work per
     call), e.g. LP-bounding the other last years."""
@@ -291,6 +294,12 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     inst = I.load(name)
     model = last_year_model(inst, L, encoding, balance)
     log: list[str] = []
+    extra_rows: list = []
+    if cut_rounds:
+        from .cuts import cut_row, root_loop
+        bounds, cuts = root_loop(model, cut_rounds)
+        extra_rows = [cut_row(model, c) for c in cuts]
+        log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
     ctx = mp.get_context("spawn")
     lock = ctx.Lock()
     best_val = ctx.Value("d", np.inf, lock=False)
@@ -311,7 +320,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     closed: list[float] = []      # dual bounds of finished subtrees
     resplits = 0
     with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
-                             initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance)) as pool:
+                             initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance, extra_rows)) as pool:
         warm = [pool.submit(_noop) for _ in range(workers)]  # the pool spawns while the master builds the ramp-up
         leaves, pruned = ramp_up(model, n_leaves, best_val.value)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
