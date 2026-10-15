@@ -182,3 +182,63 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 | 4 | 0 | 9.1e-4 | +3.1e-4 |
 
 * **Verdict**: a median of 3.0e-4 against C1's 3.5e-4 (same setup without strong branching) is within noise. Strong branching stays available as an option, off by default. Across E2/E10/E12 the gap at 300 s tracks the schedule found: every run whose schedule beat the CPO's by about 1e-4 or more closed to 4e-5 or better, and none of the others did. More LNS workers do not fix this, because they all search around the same shared incumbent. **The bottleneck is now the primal side**: finding the near-optimal schedule reliably.
+
+### E13: a big-project LNS neighbourhood (now the default)
+
+* New LNS neighbourhood: free 1-3 of the largest projects (top 10% by spend) plus a random set of others, with a 3x longer sub-MIP limit. The gap anatomy study found the optimum moves a few big, long projects by 1-19 years relative to the LP, which the window and hot-spot neighbourhoods rarely allow.
+* **Screen** (the E12 setup plus the new neighbourhood, 300 s, 3 seeds):
+
+| | Gap at 300 s (seeds 0 / 1 / 2) | Final schedule vs the CPO's | Seeds beating the CPO by at least 1e-4 |
+|---|---|---|---|
+| E12 (no big-project moves) | 4.0e-5 / 6.8e-4 / 3.0e-4 (median 3.0e-4) | -1.06e-4 / +1.37e-4 / -3.5e-5 | 1 of 3 |
+| E13 | 2.3e-4 / 1.8e-4 / 4.0e-5 (median **1.8e-4**) | -1.13e-4 / -1.02e-4 / -1.13e-4 | **3 of 3** |
+
+* **Verdict**: a clear primal gain: the worst seed improves 3x and every seed finds a better-than-CPO schedule. It becomes the default (`lns_big=True`). The near-optimal schedule still arrives late, at about 200 s, so the primal side stays the bottleneck for the time-to-1e-5 KPI.
+* A pure-LNS screen (all 20 workers on LNS) was abandoned: starting from the quick try's weak schedule it was still 1.3% off at 120 s, whereas the real setup gets within 0.1% by about 100 s because the tree leaves supply the good starting schedules. Primal changes must be screened inside the full setup.
+
+### E14: warm start from the CPO's own schedule (like-for-like with COPT's logged time)
+
+* COPT's logged times (56 s here) are warm-started. New option `warm_start` (a solution file), counted inside capopt's wall-clock. Setup: E13 (16 LNS workers x 280 s, cutoff after 60 s, strong branching k = 4, big-project LNS), 3 seeds.
+* **Result**: **proven to gap 1e-5 in 184 s and 185 s** (seeds 0 and 2); seed 1 reached 1.17e-5 at 311 s. All three schedules are 1.23-1.26e-4 better than the CPO's stored optimum (which carried the start cap). These are capopt's first full proofs on the real data.
+* Against COPT: median about 185 s vs 56 s (ratio 3.3). The ramp-up took 74-77 s, because strong branching only had the 4 workers outside LNS. E15 starts LNS after the ramp-up.
+
+### E15: start LNS after the ramp-up (warm start)
+
+* Option `lns_after_rampup`: LNS workers are submitted after the ramp-up, so strong branching gets the whole pool. Ramp-up time: 74-77 s down to about 25 s, with 151-162 nodes pruned.
+
+| Arm (warm start, 16 LNS x 280 s, k = 4, big-project LNS) | Proof of 1e-5, seeds 0 / 1 |
+|---|---|
+| E14: LNS from the start, cutoff after 60 s | 184 s / not proven by 311 s (1.17e-5) |
+| **E15A: LNS after the ramp-up, cutoff after 60 s** | **147 s / 115 s** |
+| E15B: LNS after the ramp-up, cutoff from the start | 180 s / 138 s |
+
+* **Verdict**: A. Even with a good warm start, searching leaves without a cutoff for the first minute is still worth it. About 11 s of each proof is L = 31: it survives the root-LP prune and gets its own pool and default ramp-up (no cutoff), which prunes everything in 10.8 s.
+
+### E16: prune surviving last years with LP trees in the master's idle time
+
+* Once the other last years are root-LP-bounded, the master's idle time grows a best-first LP tree (default branching, current incumbent as cutoff) for each last year that the root LP could not prune. A last year whose tree empties is pruned without a MIP solve. Offline on L = 31: closed after 41 expansions (10.9 s of master time), which fits in the roughly 100 s the master waits during the L = 30 tree.
+* **Result** (E15A setup plus idle trees, warm start from the CPO schedule, 3 seeds): L = 31 was pruned in idle time in every run (41 expansions), with 29 of 29 other last years pruned. Proofs took 194 s / not proven by 303 s / 155 s, but these seeds found weaker schedules (-1.22 to -1.25e-4 vs the CPO's) than E15A's (-1.25 / -1.27e-4).
+* Across all warm-started runs, proof time follows schedule quality: -1.27e-4 proved in 115 s; -1.26e-4 in 138-185 s; -1.25e-4 in 147-184 s; -1.24e-4 in 194 s; -1.22/-1.23e-4 did not prove within 300 s. 2-seed screens of tree-side changes are dominated by this primal luck. Idle trees stay on: they remove a whole MIP solve and cannot slow the tree.
+
+### E17: decomposition: proof time given the best-known schedule
+
+| Arm (warm start from the best-known schedule, -1.265e-4 vs the CPO's) | Proof of 1e-5 |
+|---|---|
+| P1: E15A setup (16 LNS workers x 280 s after the ramp-up, cutoff after 60 s) | 159.5 s |
+| **P2: no LNS, all 20 workers on the tree, cutoff from the start** | **59.6 s / 54.4 s** (seeds 0 / 1) |
+
+* **Verdict**: with the near-optimal schedule in hand, capopt proves 1e-5 in 54-60 s, against COPT's logged 56.1 s (warm-started). The proof machinery is at parity. In P1 the proof takes 2.7x longer because LNS holds 16 of 20 workers for 280 s. **The remaining gap to COPT is primal, plus handing LNS workers back to the tree once the schedule is good** (E18).
+
+### E18: LNS patience (LNS workers rejoin the tree once the incumbent stalls)
+
+| Patience (E15A setup + idle trees, warm start from the CPO schedule) | Proof of 1e-5, seeds 0 / 1 | Final schedule vs the CPO's | Final schedule found at |
+|---|---|---|---|
+| 15 s | 110.9 s / 264.9 s | -1.252e-4 / -1.233e-4 | 88 s / 101 s |
+| 30 s | 265.5 s / 117.1 s | -1.226e-4 / -1.254e-4 | 207 s / 70 s |
+
+* All four runs proved (the previous setup: 4 of 5), but the times split in two: about 115 s when a schedule near -1.25e-4 arrives by about 90 s, and about 265 s otherwise. The median does not clearly beat the previous setup's 155 s. Both patience values fall in the same pattern. All final schedules are within 1e-5 of the best known; a better incumbent only tightens the cutoff (incumbent minus the 1e-5 tolerance) the tree prunes against.
+
+### E19: warm start from the CPO schedule, no LNS (all 20 workers on the tree, cutoff from the start)
+
+* **Result**: 253.5 s (seed 0); seed 1 not proven by 300 s. The tree's leaves improve the schedule only slowly (final schedules -1.224e-4 / -1.211e-4, found at 253 s / 148 s).
+* **Verdict**: LNS earns its workers on the primal side. The best warm-start setup so far is E15A/E18: about 110-120 s when LNS finds a near-optimal schedule by about 90 s, about 265 s otherwise. COPT's logged time is 56 s; proving from the best-known schedule takes capopt 54-60 s (E17), so the remaining gap is finding that schedule sooner.

@@ -20,7 +20,7 @@ import numpy as np
 from . import instance as I
 from .evaluate import evaluate
 from .formulation import last_year_model
-from .parallel import solve_parallel
+from .parallel import Node, _branch, _lp_node, solve_parallel
 from .solve import new_highs
 
 
@@ -35,6 +35,37 @@ class Result:
     trace: list[tuple[float, float]]
     last_years: dict[int, str] = field(default_factory=dict)  # L -> "solved" | "pruned (LP)" | "infeasible"
     log: list[str] = field(default_factory=list)
+
+
+class _LPTree:
+    """E16: a best-first LP tree for one last year L, grown one node at a time in the master's idle time, so a last
+    year whose root LP bound beats the incumbent can still be pruned without its own MIP solve."""
+
+    def __init__(self, inst: I.Instance, L: int, encoding: str, balance: str, max_expansions: int = 500):
+        self.model = last_year_model(inst, L, encoding, balance)
+        root = _lp_node(self.model, [])
+        self.heap: list[Node] = [] if root is None else [root]
+        self.expansions, self.max_expansions, self.stuck = 0, max_expansions, False
+
+    @property
+    def closed(self) -> bool:
+        return not self.heap and not self.stuck
+
+    def step(self, cutoff: float) -> None:
+        import heapq
+        while self.heap and self.heap[0].bound >= cutoff:
+            heapq.heappop(self.heap)
+        if not self.heap or self.stuck or self.expansions >= self.max_expansions:
+            return
+        node = heapq.heappop(self.heap)
+        if not node.frac:  # an LP-integral node that beats the cutoff: only the MIP can settle this last year
+            heapq.heappush(self.heap, node)
+            self.stuck = True
+            return
+        self.expansions += 1
+        for child in _branch(self.model, node):
+            if child is not None and child.bound < cutoff:
+                heapq.heappush(self.heap, child)
 
 
 def lp_bound(inst: I.Instance, L: int) -> float:
@@ -57,9 +88,13 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
           lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
           leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0, cutoff_after: float | None = None,
-          sb_candidates: int = 0) -> Result:
+          sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None,
+          lns_after_rampup: bool = False, lns_patience: float | None = None) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
-    See docs/EXPERIMENTS.md for why each default was chosen."""
+    See docs/EXPERIMENTS.md for why each default was chosen.
+    lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
+    warm_start: path to a solution JSON with "starts" (e.g. a previous plan); used as the first incumbent if feasible.
+    The time counted includes loading it."""
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -73,20 +108,53 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         others = list(range(L0 + 1, inst.T))
     lp: dict[int, float] = {}
     queue = list(others)
+    trees: dict[int, _LPTree] = {}
+    tree_pruned: set[int] = set()
 
     def idle(best: float) -> None:  # LP-bound one more last year while workers are busy
         if queue:
             L = queue.pop(0)
             lp[L] = lp_bound(inst, L)
+            return
+        if best == np.inf:
+            return
+        cut = best - rel_gap * abs(best)
+        for L in others:  # E16: grow an LP tree for a last year the root LP could not prune
+            if L in tree_pruned or lp.get(L, np.inf) >= cut:
+                continue
+            if L not in trees:
+                trees[L] = _LPTree(inst, L, encoding, balance)
+            tree = trees[L]
+            tree.step(cut)
+            if tree.closed:
+                tree_pruned.add(L)
+                lp[L] = max(lp[L], cut)
+                log.append(f"L={L}: pruned by an LP tree of {tree.expansions} expansions in idle time")
+                continue
+            if tree.stuck or tree.expansions >= tree.max_expansions:
+                continue
+            return
 
     best_obj, best_starts, dual, trace = np.inf, None, np.inf, []
+    if warm_start is not None:
+        import json
+        from pathlib import Path
+        st = inst.starts_from_dict(json.loads(Path(warm_start).read_text(encoding="utf-8"))["starts"])
+        ev = evaluate(inst, st)
+        if ev["feasible"]:
+            best_obj, best_starts = float(ev["objective"]), st
+            trace.append((time.time() - t0, best_obj))
+            log.append(f"warm start: objective {best_obj:.6f}")
+        else:
+            log.append("warm start: infeasible for this instance, ignored")
     proven_all = True
     for L in L_order:
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit - (time.time() - t0),
                            incumbent=best_starts, t0=t0, idle=idle, slice_seconds=slice_seconds,
                            lns_workers=lns_workers, lns_seconds=lns_seconds, cut_rounds=cut_rounds,
                            quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed,
-                           cutoff_after=cutoff_after, sb_candidates=sb_candidates)
+                           cutoff_after=cutoff_after, sb_candidates=sb_candidates, lns_big=lns_big,
+                           lns_after_rampup=lns_after_rampup, lns_patience=lns_patience)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven
