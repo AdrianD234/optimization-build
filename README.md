@@ -1,8 +1,8 @@
 # optimization-build: capopt
 
-capopt is an open-source optimiser for the capital-programme scheduling MILP in `benchmark_pack/`. It is built on HiGHS, and the target to beat is MindOpt's times on the pack's benchmark.
+capopt is an open-source optimiser for the capital-programme scheduling MILP in `benchmark_pack/`. It is built on HiGHS, and it is benchmarked against stock HiGHS (commercial-solver comparisons are kept privately).
 
-* `benchmark_pack/` is the problem set: instances, formulation, the referee (`reference/evaluate.py`), best-known solutions and MindOpt's benchmark times. It is read-only, and the tests hash-check it.
+* `benchmark_pack/` is the problem set: instances, formulation, the referee (`reference/evaluate.py`), and best-known solutions. It is read-only, and the tests hash-check it.
 * `src/capopt/` is the optimiser (see [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md) for the architecture and roadmap).
 * `benchmarks/` holds experiment scripts, stored runs, and the generated [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md).
 * `docs/research/` holds the literature reviews behind the roadmap: [MILP frontier](docs/research/MILP_FRONTIER.md), [AI-for-maths results](docs/research/AI_MATH_RESULTS.md) and [MindOpt hybrids and cross-field techniques](docs/research/HYBRID_AND_CROSSFIELD.md).
@@ -16,14 +16,16 @@ capopt is an open-source optimiser for the capital-programme scheduling MILP in 
 4. **Parallel split-and-solve.** HiGHS' tree search is sequential. capopt splits the model into subtrees chosen best-first from LP bounds and solves them in 20 worker processes. The workers share an incumbent, which stops a subtree as soon as its bound reaches it.
 5. **Overlapping start-up.** While the worker pool spawns, the master tries a direct solve for 1.5 s, which finishes the easy instances before the pool is up.
 
-## Results (this machine, capopt default vs MindOpt cold)
+## Results (this machine, capopt default vs the HiGHS baseline)
+
+The HiGHS baseline is stock HiGHS 1.15.1 on a faithful port of the reference production model.
 
 | Instance | Proof of optimality | Within 0.1% |
 |---|---|---|
-| P100_raw_penalised | **86 s** vs 232 s | 4.2 s vs 32 s |
-| P100_growth_penalised | **7.4 s** vs 179 s | 0.9 s vs 105 s |
-| P100_raw_nopenalty | **74 s** vs not proven in 900 s; new optimum, 5.2e-6 better than the pack's best-known | 1.2 s vs 28 s |
-| P100_growth_nopenalty | **0.74 s** vs 132 s | 0.3 s vs 10 s |
+| P100_raw_penalised | **86 s** vs 315 s | 4.2 s vs 4.4 s |
+| P100_growth_penalised | **7.4 s** vs 119 s | 0.9 s vs 28 s |
+| P100_raw_nopenalty | **74 s** vs not proven (stopped at 1,080 s); new optimum, 5.2e-6 better than the pack's best-known | 1.2 s vs 149 s |
+| P100_growth_nopenalty | **0.74 s** vs 1.7 s | 0.3 s vs 0.8 s |
 
 The full ladder (baseline B0, then I1-I10) is in [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md). The QA scorecard and known gaps are in [docs/QA.md](docs/QA.md).
 
@@ -57,4 +59,4 @@ A campaign is STALLED when its heartbeat is 5 minutes old, its runner process is
 
 ## Status
 
-See [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md) for current numbers against MindOpt, and [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) for the experiment log.
+See [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md) for current numbers against the HiGHS baseline, and [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) for the experiment log.

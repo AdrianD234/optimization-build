@@ -190,8 +190,33 @@ def time_to(trace: list, target: float, rel: float) -> float | None:
 
 
 # ---- report -------------------------------------------------------------------------------------------------------
-def mindopt_rows() -> dict[str, dict[str, Any]]:
-    d = json.loads((I.PACK / "results" / "benchmark_results.json").read_text(encoding="utf-8"))
+# MindOpt's recorded pack runs are kept privately (licence terms on publishing benchmarks), under the gitignored
+# private/ folder. The public report compares capopt with the HiGHS baseline (B0) only; `capopt report` also writes
+# a private report that includes MindOpt when that data is present.
+MINDOPT_RESULTS = ROOT / "private" / "pack_mindopt" / "results" / "benchmark_results.json"
+PRIVATE_REPORT = ROOT / "private" / "pack_mindopt" / "BENCHMARK_with_mindopt.md"
+BASELINE = "highs_reference"
+
+
+def baseline_rows(res: dict) -> dict[str, dict[str, Any]]:
+    """The HiGHS baseline (B0) per instance, as medians of its stored runs."""
+    out = {}
+    for name in I.INSTANCE_NAMES:
+        recs = res.get(name, {}).get(BASELINE)
+        if recs:
+            out[name] = {k: _median([r[k] for r in recs]) for k in
+                         ("time_to_1pct", "time_to_0.1pct", "time_to_best_known", "time_to_proof")}
+            out[name]["seconds"] = max(r["seconds"] for r in recs)
+            out[name]["status"] = "proven" if out[name]["time_to_proof"] is not None else "not proven"
+    return out
+
+
+def mindopt_rows(path: Path | None = None) -> dict[str, dict[str, Any]]:
+    """The pack's recorded MindOpt cold runs, per instance ({} when the private data isn't present)."""
+    path = MINDOPT_RESULTS if path is None else path
+    if not Path(path).exists():
+        return {}
+    d = json.loads(Path(path).read_text(encoding="utf-8"))
     out = {}
     for name, rec in d["instances"].items():
         c = rec["mindopt_cold"]
@@ -201,7 +226,7 @@ def mindopt_rows() -> dict[str, dict[str, Any]]:
         out[name] = {"time_to_1pct": c["time_to_within_1pct_s"], "time_to_0.1pct": c["time_to_within_0.1pct_s"],
                      "time_to_best_known": tbk,
                      "time_to_proof": c["seconds"] if c["status"] == "OPTIMAL" else None,
-                     "seconds": c["seconds"], "status": c["status"], "gap": c["gap"]}
+                     "seconds": c["seconds"], "status": f"{c['status'].lower()}, gap {c['gap']:.4%}"}
     return out
 
 
@@ -233,25 +258,25 @@ def fmt(x: float | None) -> str:
 DEFAULT_CONFIG = "capopt_quick_nocut"
 
 
-def _headline(mo: dict, res: dict) -> list[str]:
-    """capopt's default pipeline against MindOpt cold, one row per instance and metric."""
-    if not any(DEFAULT_CONFIG in res.get(n, {}) for n in I.INSTANCE_NAMES):
+def _headline(ref: dict, ref_label: str, res: dict) -> list[str]:
+    """capopt's default pipeline against the reference solver, one row per instance and metric."""
+    if not ref or not any(DEFAULT_CONFIG in res.get(n, {}) for n in I.INSTANCE_NAMES):
         return []
-    out = [f"## Headline: capopt default ({CONFIGS[DEFAULT_CONFIG][0]}) vs MindOpt cold", "",
+    out = [f"## Headline: capopt default ({CONFIGS[DEFAULT_CONFIG][0]}) vs {ref_label}", "",
            "| Instance | Within 1% | Within 0.1% | Pack best-known | Proof of optimality |", "|---|---|---|---|---|"]
     for name in I.INSTANCE_NAMES:
         recs = res.get(name, {}).get(DEFAULT_CONFIG)
-        if not recs:
+        if not recs or name not in ref:
             continue
         cells = []
         for key in ("time_to_1pct", "time_to_0.1pct", "time_to_best_known", "time_to_proof"):
-            ours, theirs = _median([r[key] for r in recs]), mo[name][key]
+            ours, theirs = _median([r[key] for r in recs]), ref[name][key]
             if ours and theirs:
                 k = theirs / ours
                 cells.append(f"{fmt(ours)} s vs {fmt(theirs)} s ({k:.1f}x)" if k < 10 else
                              f"{fmt(ours)} s vs {fmt(theirs)} s ({k:.0f}x)")
             elif ours:
-                cells.append(f"{fmt(ours)} s (MindOpt: not reached)")
+                cells.append(f"{fmt(ours)} s ({ref_label}: not reached)")
             else:
                 cells.append(f"- vs {fmt(theirs)} s")
         out.append(f"| {name} | " + " | ".join(cells) + " |")
@@ -260,22 +285,28 @@ def _headline(mo: dict, res: dict) -> list[str]:
     return out
 
 
-def write_report(out_dir: Path = RESULTS, path: Path = REPORT) -> str:
-    mo = mindopt_rows()
+def write_report(out_dir: Path = RESULTS, path: Path = REPORT, include_mindopt: bool = False) -> str:
+    """The benchmark report. Public (default): capopt vs the HiGHS baseline. include_mindopt=True adds the pack's
+    recorded MindOpt runs, which are private data: write that version under private/ only."""
     res = load_results(out_dir)
-    lines = ["# Benchmark: capopt vs MindOpt", "",
+    mo = mindopt_rows() if include_mindopt else {}
+    ref, ref_label = (mo, "MindOpt cold") if mo else (baseline_rows(res), "HiGHS baseline")
+    lines = [f"# Benchmark: capopt vs {ref_label}", "",
              "Generated by `capopt report` from the stored runs in `benchmarks/results/`. Times are wall-clock seconds "
              "from the start of the run (model build included). The thresholds are relative to the pack's best-known "
-             "objective, and every schedule is re-scored by the pack's referee. MindOpt cold is the pack's recorded run "
-             "(MindOpt 2.3, 20 threads), measured on this same machine. Where several seeds ran, the table shows the "
-             "median, with the range in brackets.", "",
+             "objective, and every schedule is re-scored by the pack's referee. The HiGHS baseline (B0) is stock "
+             "HiGHS 1.15.1 on a faithful port of the reference production model, run on this machine. Where several "
+             "seeds ran, the table shows the median, with the range in brackets.", "",
              "| Instance | Rung | Method | Runs | Within 1% | Within 0.1% | Best-known | Proof | Final gap to best-known "
              "| Referee feasible |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     for name in I.INSTANCE_NAMES:
-        m = mo[name]
-        lines.append(f"| {name} | ref | MindOpt cold ({m['status'].lower()}, gap {m['gap']:.4%}) | 1 | {fmt(m['time_to_1pct'])} | "
-                     f"{fmt(m['time_to_0.1pct'])} | {fmt(m['time_to_best_known'])} | {fmt(m['time_to_proof'])} | - | yes |")
+        if mo:
+            m = mo[name]
+            lines.append(f"| {name} | ref | MindOpt cold ({m['status']}) | 1 | {fmt(m['time_to_1pct'])} | "
+                         f"{fmt(m['time_to_0.1pct'])} | {fmt(m['time_to_best_known'])} | {fmt(m['time_to_proof'])} | - | yes |")
+        else:
+            lines.append(f"| {name} | | | | | | | | | |")
         for cfg, recs in res.get(name, {}).items():
             rung, desc, _ = CONFIGS[cfg]
             cells = []
@@ -293,26 +324,26 @@ def write_report(out_dir: Path = RESULTS, path: Path = REPORT) -> str:
                 desc += " (killed by the watchdog: solver ignored its time limit)"
             lines.append(f"| | {rung} | {desc} | {len(recs)} | " + " | ".join(cells) +
                          f" | {'-' if g is None else f'{g:.2e}'} | {'yes' if feas else 'NO'} |")
-    lines += ["", "Rungs: B0 = baseline (stock HiGHS, same model as MindOpt); I1..In = capopt's improvement ladder "
-              "(see docs/MASTER_PLAN.md). '-' = not reached within the time limit.", ""]
+    lines += ["", "Rungs: B0 = baseline (stock HiGHS on the reference production model); I1..In = capopt's improvement "
+              "ladder (see docs/MASTER_PLAN.md). '-' = not reached within the time limit.", ""]
     best = {}
     for name in I.INSTANCE_NAMES:
         for cfg, recs in res.get(name, {}).items():
             best.setdefault(cfg, {})[name] = _median([r["time_to_proof"] for r in recs])
-    if best:
-        lines += ["## Speed-up vs MindOpt cold (time to proof)", "", "| Method | " + " | ".join(I.INSTANCE_NAMES) + " |",
+    if best and ref:
+        lines += [f"## Speed-up vs {ref_label} (time to proof)", "", "| Method | " + " | ".join(I.INSTANCE_NAMES) + " |",
                   "|---|" + "---|" * len(I.INSTANCE_NAMES)]
         for cfg, d in best.items():
             row = []
             for name in I.INSTANCE_NAMES:
-                ours, theirs = d.get(name), mo[name]["time_to_proof"]
-                if ours is not None and theirs is None:
-                    row.append(f"proved in {fmt(ours)} s (MindOpt did not, {mo[name]['seconds']:.0f} s)")
+                ours, theirs = d.get(name), ref.get(name, {}).get("time_to_proof")
+                if ours is not None and theirs is None and name in ref:
+                    row.append(f"proved in {fmt(ours)} s ({ref_label} did not, {ref[name]['seconds']:.0f} s)")
                 else:
                     row.append("-" if ours is None or theirs is None else f"{theirs / ours:.1f}x")
             lines.append(f"| {CONFIGS[cfg][0]} {cfg} | " + " | ".join(row) + " |")
         lines.append("")
     head = lines[:3]  # title, blank, method paragraph
-    text = "\n".join(head + [""] + _headline(mo, res) + ["## All runs", ""] + lines[4:])
+    text = "\n".join(head + [""] + _headline(ref, ref_label, res) + ["## All runs", ""] + lines[4:])
     path.write_text(text, encoding="utf-8")
     return text

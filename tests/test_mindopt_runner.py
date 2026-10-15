@@ -91,7 +91,7 @@ def test_bench_records_skip_and_report_falls_back(monkeypatch, tmp_path):
     rec = bench.run("mindopt_cold", "P100_raw_penalised", 10, 0, tmp_path)
     assert "skipped" in rec and (tmp_path / "mindopt_cold" / "P100_raw_penalised_s0.skipped.json").exists()
     text = bench.write_report(tmp_path, tmp_path / "B.md")
-    assert "MindOpt cold (optimal" in text  # the pack's recorded run is still reported
+    assert "MindOpt cold" not in text  # a skipped live run adds nothing to the public report
 
 
 def test_mindopt_runs_are_never_watchdog_killed():

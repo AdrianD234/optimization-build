@@ -1,6 +1,6 @@
 # Capital programme scheduling - benchmark pack
 
-Four instances of a 100-project capital programme scheduling problem, an exact scoring script, the best-known solutions, and the MindOpt benchmark times to beat.
+Four instances of a 100-project capital programme scheduling problem, an exact scoring script, the best-known solutions. (The original solver benchmark times are kept privately.)
 
 ## Contents
 
@@ -11,8 +11,7 @@ Four instances of a 100-project capital programme scheduling problem, an exact s
 | `instances/*.json` | The four instances (solver-neutral, all numbers in the solver's integer units). |
 | `solutions/*_best_known.json` | Best-known schedule and objective per instance (`proven_optimal` flag). |
 | `solutions/*_reference.json` | The schedules from the original MindOpt pipeline run. |
-| `results/BENCHMARK.md` | **The benchmark table**: MindOpt cold vs heuristic-then-MindOpt, time to 1% / 0.1% / best-known / proof. |
-| `results/benchmark_results.json`, `results/logs/` | Full results and MindOpt logs. |
+| `results/` | The original solver benchmark (table, JSON, logs): kept privately, not in this repository. |
 | `reference/evaluate.py` | **The referee**: scores any schedule exactly as the MIP does (no solver needed). |
 | `reference/hill_climb.py` | Baseline heuristic (constructions, simulated annealing, hill-climb polish). Pure Python. |
 | `reference/mindopt_model.py` | The reference MIP (MindOpt), incl. warm-start loading. |
@@ -40,7 +39,7 @@ Four instances of a 100-project capital programme scheduling problem, an exact s
 * Use the instances unchanged; the score is `reference/evaluate.py`'s objective of the schedule you return.
 * Report wall-clock time to reach within 1% and 0.1% of the best-known objective, and to reach it (or beat it).
 * For like-for-like times, re-run `reference/run_benchmark.py` on the same machine as your optimiser (the reference figures are from a 20-thread Windows machine; MindOpt times also vary between runs).
-* The two **penalised** instances are the meaningful test: local search struggles there and MindOpt needs 3-4 minutes to prove the optimum.
+* The two **penalised** instances are the meaningful test: local search struggles there.
 
 ## Requirements
 

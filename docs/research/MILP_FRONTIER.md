@@ -1,7 +1,7 @@
 # MILP frontier review for the capital-programme scheduler
 
 **Date:** 2026-10-15
-**Scope:** Literature and benchmark review to guide a HiGHS- or SCIP-based optimiser for the capital-programme scheduling problem. The problem has 100 projects, a 60-year horizon, a time-indexed start-year choice, a cumulative funding balance that must stay non-negative, and an objective made of holding cost (with convex piecewise penalty bands weighted 1e3 to 1e6) minus the PV of benefits. The target is to beat MindOpt's 3 to 4 minutes to proven optimality on the penalised instances.
+**Scope:** Literature and benchmark review to guide a HiGHS- or SCIP-based optimiser for the capital-programme scheduling problem. The problem has 100 projects, a 60-year horizon, a time-indexed start-year choice, a cumulative funding balance that must stay non-negative, and an objective made of holding cost (with convex piecewise penalty bands weighted 1e3 to 1e6) minus the PV of benefits. The target is to beat a commercial solver's time to proven optimality on the penalised instances.
 
 ## Method
 
@@ -15,7 +15,7 @@ These come from my own analysis of the model, not from any one paper.
 
 1. **The LP bound equals the Lagrangian bound.** Each project's own constraint is `sum_s x[p,s] = 1`, a single GUB/simplex, so it has the integrality property. Dualising the cumulative budget rows (and the balance-definition rows, if the convex holding and penalty term is moved onto copy variables `net_t`) therefore gives exactly the LP bound (Geoffrion). Classic Lagrangian relaxation of the budget gives speed and a heuristic, but no bound improvement. Bound improvement has to come from cuts on the cumulative-knapsack rows, a stronger reformulation (Dantzig-Wolfe over groups of time rows, as for the temporal knapsack), or branching.
 2. **Pulse and step formulations have the same LP bound.** The pulse model uses `x[p,s]` = start in `s`; the step model uses `z[p,t] = sum_{s<=t} x[p,s]`. In their disaggregated forms the two are equivalent (Artigues 2017), so a reformulation buys **branching balance and propagation, not a better root bound**. Branching on `x[p,s]=0` is a very weak, unbalanced dichotomy. Branching on `z[p,t]` ("start by t" versus "after t") is the SOS1/GUB dichotomy. HiGHS has no SOS branching, so reformulating is the only way to get it there.
-3. **Proving optimality is mostly about the bound, not finding solutions.** With 100 projects, good incumbents should come quickly from Feasibility Jump, RINS or a custom greedy. The 3-4 minutes MindOpt spends are probably spent closing the gap. Expect the largest gains from formulation, cuts, branching and parallel racing, and smaller ones from fancier primal heuristics.
+3. **Proving optimality is mostly about the bound, not finding solutions.** With 100 projects, good incumbents should come quickly from Feasibility Jump, RINS or a custom greedy. The time a commercial solver spends are probably spent closing the gap. Expect the largest gains from formulation, cuts, branching and parallel racing, and smaller ones from fancier primal heuristics.
 4. **Cliff-like penalty weights (up to 1e6) are a numerics risk.** They inflate the objective dynamic range, which hurts reduced-cost fixing, gap tolerances and LP conditioning (see Miltenberger, Ralphs and Steffy).
 
 ## Calibration: HiGHS against commercial solvers
@@ -95,7 +95,7 @@ Ranked by expected impact on **time to proven optimality** for the penalised ins
 
 - **Instances and seeds:** the penalised variants, 5 seeds each.
 - **Metrics:** shifted geometric mean of time to optimal at `mip_rel_gap=0` (or the tolerance MindOpt used), node count, root gap closed `(z_root - z_LP)/(z_opt - z_LP)`, and the primal integral.
-- **Baseline:** the same model in stock highspy 1.15.x, plus the MindOpt baseline of 180-240 s.
+- **Baseline:** the same model in stock highspy 1.15.x, plus the commercial-solver reference (kept privately).
 
 ### 1. Step ("started-by") reformulation and branching on it
 - **Implement.** Replace or augment the pulse variables `x[p,s]` with `z[p,t] = sum_{s<=t} x[p,s]`.

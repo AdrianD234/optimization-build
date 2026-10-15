@@ -41,8 +41,9 @@ class LicenceLock:
     """Exclusive, cross-process lock on a file (msvcrt on Windows, fcntl elsewhere); released by the OS if the holder
     dies."""
 
-    def __init__(self, path: Path = LOCK_PATH, timeout: float | None = None, poll: float = 0.5) -> None:
-        self.path, self.timeout, self.poll = Path(path), timeout, poll
+    def __init__(self, path: Path | None = None, timeout: float | None = None, poll: float = 0.5) -> None:
+        # resolve the default at call time, so tests (and callers) can point LOCK_PATH elsewhere
+        self.path, self.timeout, self.poll = Path(LOCK_PATH if path is None else path), timeout, poll
         self.fh = None
 
     def _try(self) -> bool:

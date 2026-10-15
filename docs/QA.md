@@ -19,7 +19,7 @@ The rubric is the one in [MASTER_PLAN.md §6](MASTER_PLAN.md). Each line links t
 
 ## What the scorecard does not cover (known gaps)
 
-* **MindOpt has not been re-run on this machine.** `mindoptpy` is not installed. The comparison uses the pack's recorded MindOpt run, which was made on this same machine (same CPU and OS build). The licence-safe live runner (`mindopt_runner.py`: machine-wide lock, licence backoff, no killing, clean skip) is unit-tested with mocks only. Its first real run needs MindOpt and the licence: `capopt bench --configs mindopt_cold --seeds 0,1,2`.
+* **MindOpt results are private.** MindOpt runs (the pack's recorded runs and live diagnostics through the licence-safe `mindopt_runner.py`: machine-wide lock, licence backoff, no killing) are kept under the gitignored `private/` folder because of the licence's terms on publishing benchmarks. Public comparisons use the HiGHS baseline.
 * **Only four instances.** The parallel solver is effectively deterministic, so repeats measure noise but not robustness. Configuration choices (I9 default, cuts off) may be fitted to these four. The next step is a held-out set of perturbed instances (`synthetic.perturb`).
 * **raw_penalised is the slowest instance (86 s).** About 85% of that time goes to finding the optimum. LNS and re-splitting did not help (I4 and I5 in EXPERIMENTS.md).
 * **HiGHS C++ has not been forked.** Nothing so far needs solver internals (MASTER_PLAN Phase 5).

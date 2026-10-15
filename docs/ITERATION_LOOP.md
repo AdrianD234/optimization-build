@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | G0 | **Correct, always** | every schedule feasible and re-scored by the evaluator; brute-force parity on tiny instances; CI green | `pytest`, `pytest -m slow`, the referee | met |
 | G1 | **Beat COPT** on the real CPO data | primary KPI below 1.0: capopt time to gap 1e-5 vs COPT's logged time, 8 timed scenarios | timed campaign | not met: s2000_P50high reaches 0.1% at about 50-90 s, the gap stalls near 0.18% (COPT: 1e-5 in 56 s, warm-started) |
-| G2 | **Beat MindOpt on this machine** (standing reference, private results) | capopt faster than MindOpt cold to 1% / 0.1% / gap 1e-5 on the screening set | `mindopt_reference_runner` campaign (one solve at a time, never killed) | first signal: MindOpt cold is 7.3% short of the CPO objective after 141 s on s2000_P50high |
+| G2 | **Beat MindOpt on this machine** (standing reference, private results) | capopt faster than MindOpt cold to 1% / 0.1% / gap 1e-5 on the screening set | `mindopt_reference_runner` campaign (one solve at a time, never killed) | results in private notes |
 | G3 | **Decision-quality speed** (what a user waits for) | within 1% in under 10 s and within 0.1% in under 60 s on the screening set | reference campaigns (time to 1% / 0.1%) | 1%: 14-23 s (24 leaves); 0.1%: 49-87 s, not on every seed |
 | G4 | **Policy insight** for the holding-cash rule | a PV vs peak-cash frontier across the H17 variants, each with its solve speed | H17 campaign | pure PV: +0.36% PV but $1.46B peak cash (vs $344M); variants queued |
 | G5 | **Pack regression** | no pack instance more than 20% slower than its last kept result | pack campaign | met |
@@ -19,7 +19,7 @@
 |---|---|---|---|
 | **CPO timed** (primary) | 8 GPS27 "objective best" scenarios with a COPT solve time in the CPO notebook's log (s1500/s2000 × base/high benefits, CFADS after debt service × P50/P95 × base/high) | COPT time and gap from the log; the CPO's stored objective | `private/cpo/` (real data, gitignored) |
 | **CPO untimed** | CFADS P50/P95, S1750 P50/P95 | the CPO's stored objective (gap 6e-6 to 1e-5) | `private/cpo/` |
-| **Pack** (regression) | the four `benchmark_pack` instances | MindOpt recorded times; proven optima | public |
+| **Pack** (regression) | the four `benchmark_pack` instances | HiGHS-baseline times; proven optima | public |
 
 **Primary KPI:** shifted geometric mean, over the 8 timed scenarios, of (capopt time to gap 1e-5) / (COPT logged time), with a 10 s shift. Below 1.0 means we beat COPT.
 **Secondary:** time to within 1% and 0.1% of the CPO objective, final objective vs the CPO's (we may find better schedules), and pack regression (no instance more than 20% slower).

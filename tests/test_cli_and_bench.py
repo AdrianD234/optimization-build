@@ -35,17 +35,39 @@ def test_median_counts_misses():
     assert bench._median([]) is None
 
 
-def test_mindopt_rows_and_report(tmp_path):
-    mo = bench.mindopt_rows()
-    assert set(mo) == set(I.INSTANCE_NAMES)
-    assert mo["P100_raw_penalised"]["time_to_proof"] == pytest.approx(231.5)
-    rec = {"config": "capopt_parallel", "instance": "P100_raw_penalised", "time_to_1pct": 3.0, "time_to_0.1pct": 3.0,
-           "time_to_best_known": 70.0, "time_to_proof": 80.0, "best_known": -7408929413.924332,
-           "referee": {"feasible": True, "objective": -7408929413.924332}}
-    (tmp_path / "capopt_parallel").mkdir()
-    (tmp_path / "capopt_parallel" / "P100_raw_penalised_s0.json").write_text(json.dumps(rec))
+def _record(cfg, name, proof, best_known=-7408929413.924332):
+    return {"config": cfg, "instance": name, "time_to_1pct": 3.0, "time_to_0.1pct": 3.0, "time_to_best_known": 70.0,
+            "time_to_proof": proof, "seconds": proof or 900.0, "best_known": best_known,
+            "referee": {"feasible": True, "objective": best_known}}
+
+
+def test_public_report_compares_with_the_highs_baseline_only(tmp_path):
+    for cfg, proof in (("capopt_parallel", 80.0), ("highs_reference", 320.0)):
+        (tmp_path / cfg).mkdir()
+        (tmp_path / cfg / "P100_raw_penalised_s0.json").write_text(json.dumps(_record(cfg, "P100_raw_penalised", proof)))
     text = bench.write_report(tmp_path, tmp_path / "B.md")
-    assert "MindOpt cold" in text and "| I3 |" in text and "2.9x" in text
+    assert "vs HiGHS baseline" in text and "| I3 |" in text and "4.0x" in text
+    assert "MindOpt cold" not in text  # MindOpt's recorded runs are private
+
+
+def test_private_report_includes_mindopt_when_present(tmp_path, monkeypatch):
+    fake = {"instances": {n: {"best_known_objective": -1.0, "mindopt_cold": {
+        "time_to_within_1pct_s": 5, "time_to_within_0.1pct_s": 30, "trace": [[200, -1.0]], "status": "OPTIMAL",
+        "seconds": 240.0, "gap": 0.0}} for n in I.INSTANCE_NAMES}}
+    f = tmp_path / "benchmark_results.json"
+    f.write_text(json.dumps(fake))
+    monkeypatch.setattr(bench, "MINDOPT_RESULTS", f)
+    mo = bench.mindopt_rows(f)
+    assert set(mo) == set(I.INSTANCE_NAMES) and mo["P100_raw_penalised"]["time_to_proof"] == 240.0
+    (tmp_path / "capopt_parallel").mkdir()
+    (tmp_path / "capopt_parallel" / "P100_raw_penalised_s0.json").write_text(
+        json.dumps(_record("capopt_parallel", "P100_raw_penalised", 80.0)))
+    text = bench.write_report(tmp_path, tmp_path / "P.md", include_mindopt=True)
+    assert "MindOpt cold" in text and "3.0x" in text
+
+
+def test_mindopt_rows_empty_without_private_data(tmp_path):
+    assert bench.mindopt_rows(tmp_path / "missing.json") == {}
 
 
 def test_referee_score_rejects_bad_schedule():
