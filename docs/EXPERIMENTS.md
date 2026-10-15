@@ -283,3 +283,19 @@ Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 A
 | **60 s** | 4 | **197 s (0.72x COPT)** |
 
 * **Verdict**: capopt's first win against COPT's logged time on a scenario. KPI pass 2 repeats all six scenarios with 60 s slices.
+
+## KPI pass 2: 60 s re-split slices (stopped after five scenarios)
+
+| Scenario | COPT logged | KPI pass 1 | **KPI pass 2 (slice 60 s)** | vs COPT |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | proven 106 s | proven 177 s (weaker schedule this seed) | 3.2x |
+| s2000_P50 | 108 s | gap 1.5e-5 at 300 s | gap 1.7e-5 at 300 s | - |
+| cfadsds_P50 | 272 s | gap 3.0e-4 at 408 s | **proven 235 s** (E21: 197 s) | **0.86x** |
+| cfadsds_P50high | 491 s | gap 9.1e-5 at 737 s | **proven 247 s** | **0.50x** |
+| cfadsds_P95 | 433 s | gap 1.9e-3 at 690 s | not proven, stopped at 389 s (bug) | - |
+
+* cfadsds_P95 exposed three bugs. KPI pass 2 was stopped before cfadsds_P95high, which carried the same problem.
+  1. **Time budget counted twice.** A surviving last year got `time_limit - elapsed` *and* the shared start time, so it ran with T - 2 x elapsed. L = 42 was proven at 261 s; its survivor L = 43 then had only 128 s.
+  2. **Survivors ran with default settings** (no slicing, no strong branching, no cutoff).
+  3. **LNS was dead.** The CPO schedule ends in L = 43, but the solver started with L0 = 42, where 7 of the warm schedule's start years are not options. Every neighbourhood fixing any of them was infeasible: about 11,000 sub-MIPs, 212 real solves, 0 improvements.
+* **Fixes**: the absolute time limit is passed through; survivors get the same tree settings with the cutoff from the start; a warm start's own last year is solved first; LNS frees any project whose incumbent start is not an option of the current model. A regression test covers the late-warm-start case.
