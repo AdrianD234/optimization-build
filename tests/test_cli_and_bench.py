@@ -53,3 +53,20 @@ def test_referee_score_rejects_bad_schedule():
     assert bench.referee_score("P100_raw_penalised", bk)["feasible"]
     bad = {k: 0 for k in bk}
     assert not bench.referee_score("P100_raw_penalised", bad)["feasible"]
+
+
+def test_watchdog_record_rebuilt_from_streamed_trace(tmp_path, monkeypatch):
+    from capopt.solve import sink
+    name = "P100_raw_penalised"
+    bk = I.best_known(name)
+    inst = I.load(name)
+    trace = tmp_path / "t.jsonl"
+    monkeypatch.setenv("CAPOPT_TRACE_FILE", str(trace))
+    st = inst.starts_from_dict(bk["starts"])
+    sink(5.0, bk["objective"] * 0.995, st)  # within 1% (not really this schedule's value; only the times matter here)
+    sink(9.0, bk["objective"], st)
+    sink(7.0, bk["objective"] * 0.5, st)  # out of order and worse: ignored
+    rec = bench._record_from_trace("highs_reference", name, 0, 10.0, trace, 190.0)
+    assert rec["killed"] and not rec["proven"] and rec["time_to_proof"] is None
+    assert rec["time_to_1pct"] == 5.0 and rec["time_to_best_known"] == 9.0
+    assert rec["referee"]["feasible"]

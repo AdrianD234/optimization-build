@@ -9,6 +9,8 @@ import importlib.util
 import json
 import os
 import platform
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -47,6 +49,10 @@ CONFIGS: dict[str, tuple[str, str, Callable[..., solver.Result]]] = {
                        lambda n, tl, seed: solver.solve_sequential(n, "step", "cumulative", tl)),
     "capopt_parallel": ("I3", "+ parallel split-and-solve, 20 workers, 60 leaves",
                         lambda n, tl, seed: solver.solve(n, 20, tl, 60)),
+    "capopt_resplit": ("I4", "+ time-sliced re-splitting (10 s slices)",
+                       lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0)),
+    "capopt_lns": ("I5", "+ 4 LNS workers around the shared incumbent (first 60 s)",
+                   lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0, lns_workers=4, lns_seconds=60.0)),
 }
 
 
@@ -74,6 +80,57 @@ def run(config: str, name: str, time_limit: float = 900.0, seed: int = 0, out_di
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{name}_s{seed}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
     return rec
+
+
+def run_isolated(config: str, name: str, time_limit: float = 900.0, seed: int = 0, out_dir: Path = RESULTS,
+                 grace: float = 180.0) -> dict[str, Any]:
+    """`run` in a child process with a hard wall-clock limit (time_limit + grace). If the child has to be killed (a
+    solver that ignores its time limit), the record is rebuilt from the streamed incumbent trace and marked killed."""
+    d = out_dir / config
+    d.mkdir(parents=True, exist_ok=True)
+    trace_file = d / f"{name}_s{seed}.trace.jsonl"
+    trace_file.unlink(missing_ok=True)
+    env = dict(os.environ, CAPOPT_TRACE_FILE=str(trace_file))
+    cmd = [sys.executable, "-m", "capopt.cli", "bench", "--configs", config, "--instances", name, "--seeds", str(seed),
+           "--time-limit", str(time_limit), "--no-isolate", "--out-dir", str(out_dir)]
+    t = time.time()
+    proc = subprocess.Popen(cmd, env=env)
+    try:
+        proc.wait(timeout=time_limit + grace)
+        rec = json.loads((d / f"{name}_s{seed}.json").read_text(encoding="utf-8"))
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            proc.kill()
+        proc.wait()
+        rec = _record_from_trace(config, name, seed, time_limit, trace_file, time.time() - t)
+        (d / f"{name}_s{seed}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    trace_file.unlink(missing_ok=True)
+    return rec
+
+
+def _record_from_trace(config, name, seed, time_limit, trace_file: Path, secs: float) -> dict[str, Any]:
+    rung, desc, _ = CONFIGS[config]
+    pts = [json.loads(x) for x in trace_file.read_text(encoding="utf-8").splitlines()] if trace_file.exists() else []
+    pts.sort(key=lambda r: r["t"])
+    trace, run_best, starts = [], float("inf"), None
+    for r in pts:
+        if r["obj"] < run_best:
+            run_best = r["obj"]
+            trace.append((r["t"], r["obj"]))
+            starts = r["starts"]
+    inst = I.load(name)
+    sd = inst.starts_to_dict(starts) if starts else None
+    best = I.best_known(name)["objective"]
+    return {"config": config, "rung": rung, "description": desc, "instance": name, "seed": seed,
+            "generated": datetime.now().isoformat(timespec="seconds"), "machine": machine(), "time_limit": time_limit,
+            "objective": run_best, "referee": referee_score(name, sd) if sd else {"feasible": False}, "best_known": best,
+            "proven": False, "dual_bound": None, "seconds": round(secs, 2), "wall_seconds": round(secs, 2),
+            "trace": trace, "time_to_1pct": time_to(trace, best, 0.01), "time_to_0.1pct": time_to(trace, best, 0.001),
+            "time_to_best_known": time_to(trace, best, 1e-6), "time_to_proof": None, "last_years": {},
+            "log": [f"killed by watchdog after {secs:.0f}s (solver ignored its {time_limit:.0f}s time limit)"],
+            "killed": True, "starts": sd}
 
 
 def time_to(trace: list, target: float, rel: float) -> float | None:

@@ -69,3 +69,12 @@ def test_warm_start_is_accepted(instances, best_known):
     tr = Trace()
     solve(last_year_model(inst, 18, "pulse", "recursive"), tr, time_limit=3, start=st)
     assert tr.best <= best_known["P100_growth_penalised"]["objective"] + 1e-6 * abs(tr.best)
+
+
+def test_parallel_with_lns_and_resplitting_matches_brute_force(tmp_path):
+    raw = S.tiny(6, 9, 100, 4, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, slice_seconds=0.5, lns_workers=1, lns_seconds=2)
+    assert r.proven
+    assert r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)

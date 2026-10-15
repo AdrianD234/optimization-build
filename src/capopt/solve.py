@@ -1,6 +1,8 @@
 """Run a built model with HiGHS and record an incumbent trace (wall-clock seconds, evaluator objective)."""
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -11,6 +13,14 @@ import numpy as np
 
 from .evaluate import objective
 from .formulation import Model
+
+
+def sink(t: float, obj: float, starts) -> None:
+    """Append an incumbent to $CAPOPT_TRACE_FILE (if set), so a run killed by the benchmark watchdog keeps its trace."""
+    path = os.environ.get("CAPOPT_TRACE_FILE")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": round(t, 3), "obj": obj, "starts": [int(x) for x in starts]}) + "\n")
 
 
 @dataclass
@@ -28,6 +38,7 @@ class Trace:
                 self.best = obj
                 self.best_starts = np.array(starts, dtype=np.int64)
                 self.points.append((time.perf_counter() - self.t0, obj, source))
+                sink(self.points[-1][0], obj, starts)
                 return True
         return False
 

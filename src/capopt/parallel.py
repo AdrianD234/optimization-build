@@ -26,6 +26,7 @@ import numpy as np
 from . import instance as I
 from .evaluate import objective
 from .formulation import Model, last_year_model
+from .solve import sink
 
 Split = tuple[int, int, int]  # (project, start year, side): side 0 => start <= s, side 1 => start > s
 
@@ -140,8 +141,8 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
 _W: dict = {}
 
 
-def _init(best_val, best_starts, lock, name, L, encoding, balance):
-    _W.update(best_val=best_val, best_starts=best_starts, lock=lock,
+def _init(best_val, best_starts, lock, stop, name, L, encoding, balance):
+    _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop,
               model=last_year_model(I.load(name), L, encoding, balance))
 
 
@@ -185,6 +186,75 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) ->
     return {"status": status, "bound": float(bound), "found": found, "nodes": int(info.mip_node_count)}
 
 
+def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
+    """Decisions that pin every non-free project to its start in `starts`."""
+    out: list[Split] = []
+    for p in np.nonzero(~free)[0]:
+        s = int(starts[p])
+        out += [(int(p), s, 0), (int(p), s - 1, 1)]
+    return out
+
+
+def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> dict:
+    """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
+    rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes."""
+    model: Model = _W["model"]
+    inst = model.inst
+    rng = np.random.default_rng(seed)
+    deadline = time.time() + seconds
+    size = 25
+    found, tries, wins = [], 0, 0
+    while time.time() < deadline and not _W["stop"].value:
+        if _W["best_val"].value == np.inf:
+            time.sleep(0.2)
+            continue
+        with _W["lock"]:
+            cur = np.array(_W["best_starts"][:], dtype=np.int64)
+            cur_val = _W["best_val"].value
+        kind = rng.integers(3)
+        if kind == 0:  # time window of starts
+            a = int(rng.integers(0, max(1, int(cur.max()) - 2)))
+            free = (cur >= a) & (cur <= a + int(rng.integers(2, 6)))
+        elif kind == 1:  # random subset
+            free = np.zeros(inst.n, dtype=bool)
+            free[rng.choice(inst.n, size=min(size, inst.n), replace=False)] = True
+        else:  # projects active in a year window (they share that window's cash)
+            a = int(rng.integers(0, int(cur.max()) + 1))
+            ends = cur + inst.last_nz
+            free = (cur <= a + 2) & (ends >= a)
+        if free.sum() < 5 or free.sum() > size + 15:
+            idx = np.nonzero(free)[0] if free.sum() > size + 15 else np.arange(inst.n)
+            free = np.zeros(inst.n, dtype=bool)
+            free[rng.choice(idx, size=min(size, len(idx)), replace=False)] = True
+        h = _highs(model, _fix_others(cur, free), False, min(sub_limit, max(0.1, deadline - time.time())), int(seed + tries))
+        tries += 1
+        if h is None:
+            continue
+        h.setOptionValue("objective_bound", float(cur_val))
+        h.setSolution(_vec_solution(model, cur))
+        h.run()
+        status = h.modelStatusToString(h.getModelStatus())
+        sol = h.getSolution()
+        if sol.value_valid:
+            st = model.starts_from_solution(np.asarray(sol.col_value))
+            obj = objective(inst, st)
+            if obj < cur_val - 1e-9 * abs(cur_val):
+                _offer(st, obj)
+                found.append((time.time() - t0, obj))
+                wins += 1
+        size = min(45, size + 2) if status == "Optimal" else max(12, size - 3)
+    return {"tries": tries, "wins": wins, "found": found}
+
+
+def _vec_solution(model: Model, starts: np.ndarray) -> highspy.HighsSolution:
+    sol = highspy.HighsSolution()
+    vec = model.solution_vector(starts)
+    if vec is not None:
+        sol.col_value = vec.tolist()
+        sol.value_valid = True
+    return sol
+
+
 # ---- master -------------------------------------------------------------------------------------------------------
 @dataclass
 class ParallelResult:
@@ -202,13 +272,16 @@ class ParallelResult:
 def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int | None = None, encoding: str = "step",
                    balance: str = "cumulative", time_limit: float = 900.0, incumbent: np.ndarray | None = None,
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
-                   slice_seconds: float | None = None, slice_growth: float = 1.5) -> ParallelResult:
+                   slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
+                   lns_seconds: float = 30.0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
     to the master, which re-splits it on its LP solution; the children go back into the queue with a slice
     `slice_growth` times longer. Hard subtrees get spread over idle workers, and every restart picks up the latest
     shared incumbent as its cutoff.
+
+    lns_workers: that many workers run LNS around the shared incumbent for `lns_seconds` before joining the tree.
 
     idle: called with the current incumbent value whenever the master is waiting on workers (one small unit of work per
     call), e.g. LP-bounding the other last years."""
@@ -222,6 +295,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lock = ctx.Lock()
     best_val = ctx.Value("d", np.inf, lock=False)
     best_starts = ctx.Array("q", inst.n, lock=False)
+    stop = ctx.Value("b", 0, lock=False)
     trace: list[tuple[float, float]] = []
     if incumbent is not None:
         v = objective(inst, incumbent)
@@ -237,11 +311,12 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     closed: list[float] = []      # dual bounds of finished subtrees
     resplits = 0
     with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
-                             initargs=(best_val, best_starts, lock, name, L, encoding, balance)) as pool:
+                             initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance)) as pool:
         warm = [pool.submit(_noop) for _ in range(workers)]  # the pool spawns while the master builds the ramp-up
         leaves, pruned = ramp_up(model, n_leaves, best_val.value)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         wait(warm)
+        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i, t0) for i in range(lns_workers)]
         seq = 0
         heap: list[tuple[float, int, list[Split], float | None]] = []
         for leaf in leaves:
@@ -250,7 +325,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         running: dict = {}
         last_seen = best_val.value
         while heap or running:
-            while heap and len(running) < workers:
+            for f in [f for f in lns if f.done()]:
+                lns.remove(f)
+                trace.extend(f.result()["found"])
+                log.append(f"lns: {f.result()['tries']} sub-MIPs, {f.result()['wins']} improvements")
+            while heap and len(running) < workers - len(lns):
                 b, k, splits, sl = heapq.heappop(heap)
                 if b >= tol():
                     closed.append(max(b, best_val.value)); continue
@@ -260,12 +339,14 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 tl = min(remaining, sl) if sl else remaining
                 fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k, t0)
                 running[fut] = (b, splits, sl, sl is not None and tl < remaining)
-            done, _ = wait(list(running), timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
+            done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
+            done = {f for f in done if f in running}
             if idle is not None and not done:
                 idle(best_val.value)
             if best_val.value < last_seen:
                 last_seen = best_val.value
                 trace.append((time.time() - t0, last_seen))
+                sink(trace[-1][0], last_seen, best_starts[:])
             for fut in done:
                 b, splits, sl, sliced = running.pop(fut)
                 r = fut.result()
@@ -285,6 +366,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                             heapq.heappush(heap, (child.bound, seq, child.splits, nxt)); seq += 1
                 else:
                     closed.append(r["bound"])
+        stop.value = 1
+        for f in lns:  # the tree finished first: stop and collect the LNS workers
+            r = f.result()
+            trace.extend(r["found"])
+            log.append(f"lns: {r['tries']} sub-MIPs, {r['wins']} improvements")
         if best_val.value < last_seen:
             trace.append((time.time() - t0, best_val.value))
     if resplits:
