@@ -154,18 +154,29 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
     return Node(model.user(obj), splits, cand[:32])
 
 
-def _branch(model: Model, node: Node, sb_candidates: int = 0) -> tuple[Node | None, Node | None]:
+def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None) -> tuple[Node | None, Node | None]:
     """The two children of `node`. Default: split on the top-scored fractional candidate (fractionality x spend).
     E11 (sb_candidates=k): strong branching. Solve both child LPs of the top k candidates and keep the split with
     the best product of bound gains (an infeasible child scores infinite: that split is a fixing). The gap anatomy study
-    measured 219 LP nodes to a 1e-4 gap this way, against 849 with the default rule."""
+    measured 219 LP nodes to a 1e-4 gap this way, against 849 with the default rule.
+    E12 (pool given): the candidates' child LPs run on the worker pool, one task per candidate."""
     if sb_candidates <= 1:
         _, p, s = node.frac[0]
         return _lp_node(model, node.splits + [(p, s, 0)]), _lp_node(model, node.splits + [(p, s, 1)])
+    cands = [(p, s) for _, p, s in node.frac[:sb_candidates]]
+    if pool is None:
+        results = [(_lp_node(model, node.splits + [(p, s, 0)]), _lp_node(model, node.splits + [(p, s, 1)]))
+                   for p, s in cands]
+    else:
+        results = [f.result() for f in [pool.submit(_sb_task, node.splits, p, s) for p, s in cands]]
+    return _sb_pick(node, results)
+
+
+def _sb_pick(node: Node, results) -> tuple[Node | None, Node | None]:
+    """The candidate (pair of child nodes) with the best product of bound gains, first one wins ties."""
     eps = 1e-6 + 1e-12 * abs(node.bound)
     best, best_score = None, -1.0
-    for _, p, s in node.frac[:sb_candidates]:
-        kids = (_lp_node(model, node.splits + [(p, s, 0)]), _lp_node(model, node.splits + [(p, s, 1)]))
+    for kids in results:
         gains = [np.inf if c is None else max(eps, c.bound - node.bound) for c in kids]
         score = gains[0] * gains[1]
         if score > best_score:
@@ -175,8 +186,12 @@ def _branch(model: Model, node: Node, sb_candidates: int = 0) -> tuple[Node | No
     return best
 
 
-def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0) -> tuple[list[Node], int]:
-    """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned)."""
+def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0,
+            pool=None, width: int = 1) -> tuple[list[Node], int]:
+    """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned).
+    With strong branching on a pool, the `width` best open nodes are expanded together so the pool stays busy."""
+    if pool is not None and sb_candidates > 1 and width > 1:
+        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width)
     root = _lp_node(model, [])
     if root is None:
         return [], 0
@@ -191,13 +206,40 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
         if not node.frac:  # LP integral: nothing to split on; keep as a leaf
             done.append(node)
             continue
-        for child in _branch(model, node, sb_candidates):
+        for child in _branch(model, node, sb_candidates, pool):
             if child is None or child.bound >= cutoff:
                 pruned += 1
                 continue
             heapq.heappush(heap, child)
     leaves = sorted(heap + done)
     return leaves, pruned
+
+
+def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, width: int) -> tuple[list[Node], int]:
+    root = _lp_node(model, [])
+    if root is None:
+        return [], 0
+    heap = [root]
+    done: list[Node] = []
+    pruned = 0
+    while heap and len(heap) + len(done) < n_leaves:
+        batch: list[Node] = []
+        while heap and len(batch) < width and len(heap) + len(done) + 2 * len(batch) < n_leaves:
+            node = heapq.heappop(heap)
+            if node.bound >= cutoff:
+                pruned += 1
+            elif not node.frac:
+                done.append(node)
+            else:
+                batch.append(node)
+        futs = [[pool.submit(_sb_task, n.splits, p, s) for _, p, s in n.frac[:k]] for n in batch]
+        for node, fl in zip(batch, futs):
+            for child in _sb_pick(node, [f.result() for f in fl]):
+                if child is None or child.bound >= cutoff:
+                    pruned += 1
+                    continue
+                heapq.heappush(heap, child)
+    return sorted(heap + done), pruned
 
 
 # ---- worker side --------------------------------------------------------------------------------------------------
@@ -219,6 +261,13 @@ def _load_cuts() -> None:
         for lo, hi, cols, vals in json.loads(path.read_text(encoding="utf-8")):
             _W["model"].builder.row(lo, hi, cols, vals)
     _W["cuts_loaded"] = True
+
+
+def _sb_task(splits: list[Split], p: int, s: int) -> tuple[Node | None, Node | None]:
+    """E12: one strong-branching candidate's two child LPs, on a worker (same model and cuts as the master)."""
+    _load_cuts()
+    model: Model = _W["model"]
+    return _lp_node(model, splits + [(p, s, 0)]), _lp_node(model, splits + [(p, s, 1)])
 
 
 def _offer(starts: np.ndarray, obj: float) -> None:
@@ -393,7 +442,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     E1: each running leaf has a slot in a shared array where its worker writes its live dual bound, so the global bound
         (and the streamed gap) is exact rather than frozen at launch values; re-split children inherit the parent's
         bound; the log ends with a census of the leaves whose bounds were worst.
-    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off).
+    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
+        child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
         callback either way; exp05 found the static bound can steer HiGHS' search badly.
 
@@ -460,7 +510,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             bounds, cuts = root_loop(model, cut_rounds)
             cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
-        leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates)
+        sb_pool = pool if workers - lns_workers >= 2 else None  # never queue behind LNS tasks that run for minutes
+        width = max(1, (workers - lns_workers) // max(1, sb_candidates))
+        leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates, sb_pool, width)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         wait(warm)
         seq = 0
@@ -521,7 +573,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     if not node.frac:  # LP integral yet the MIP is open: let it run to the end
                         heapq.heappush(heap, (max(b, r["bound"]), seq, splits, None)); seq += 1; continue
                     resplits += 1
-                    for child in _branch(model, node, sb_candidates):
+                    for child in _branch(model, node, sb_candidates, sb_pool):
                         if child is not None:  # E1: a child keeps at least its parent's proven bound
                             heapq.heappush(heap, (max(child.bound, r["bound"]), seq, child.splits, nxt)); seq += 1
                 else:
