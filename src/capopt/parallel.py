@@ -349,6 +349,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
     size = 25
     found, tries, wins = [], 0, 0
     big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
+    opt_sets = [set(int(x) for x in o) for o in model.options]
     base_kinds = 4 if inst.penalised else 3
     n_kinds = base_kinds + (1 if big else 0)
     weights = np.ones(n_kinds)
@@ -398,6 +399,8 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             idx = np.nonzero(free)[0] if free.sum() > size + 15 else np.arange(inst.n)
             free = np.zeros(inst.n, dtype=bool)
             free[rng.choice(idx, size=min(size, len(idx)), replace=False)] = True
+        # projects whose incumbent start is not an option of this last year's model must be free, or fixing fails
+        free = free | np.array([int(cur[q]) not in opt_sets[q] for q in range(inst.n)])
         h = _highs(model, _fix_others(cur, free), False, min(limit, max(0.1, deadline - time.time())), int(seed + tries))
         tries += 1
         if h is None:
