@@ -424,3 +424,14 @@ From 2026-10-16, an external sampler logs the machine's CPU load outside capopt 
 
 * **Verdict**: no gain, not adopted. With 16-candidate strong branching, the batched LP ramp-up is expensive per expansion, and 200 leaves turns it into most of the run.
 * **Finding**: on cfadsds_P95 the outer strong-branching LP tree on 20 workers **proved a whole last year by itself**, about as fast as the HiGHS leaves usually do (369-480 s). That is real evidence for GAP_ANATOMY #2 (a persistent outer LP tree as the proof engine, handing HiGHS only the tail).
+
+### E30: HiGHS settings for proof-phase leaves (BRANCHING_AND_TREE E5)
+
+* Option `proof_options`: HiGHS options set only on leaves launched with the incumbent cutoff. A rejected option name now raises; highspy only returns an error status, which a test caught.
+
+| Run (all load-clean) | Baseline | `mip_heuristic_effort=0` | + `mip_pscost_minreliable=16` |
+|---|---|---|---|
+| cfadsds_P50 (KPI pass 4 setup) | 172 s | 163 s | 172 s |
+| s2000_P50 proof-only (E25 setup) | 354 s (E25, untagged); 314 s (E26b, 120 s slices) | 496 s | 433 s |
+
+* **Verdict**: no gain, not adopted. HiGHS's default leaf settings are as good as or better than these, even when the incumbent is optimal; its heuristics seem to help the proof as well. The option stays for future screens.
