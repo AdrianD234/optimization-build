@@ -271,3 +271,15 @@ Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 A
 
 * The s2000 scenarios are close (one proof; the other 1.5x above the target gap).
 * The CFADS-after-debt-service scenarios are **bound-limited**. Their schedules match or beat the CPO's early (stable by 63-86 s), but their ramp-ups prune only 2-10 nodes (about 150 on s2000), and a few depth-5 to 9 leaves hold the global bound for the whole run.
+
+### E21: re-splitting stuck leaves on a bound-limited scenario (cfadsds_P50)
+
+* With `slice_seconds`, a leaf still open after its slice returns to the master, which re-splits it (with strong branching, k = 4); the children go back into the queue with a 1.5x longer slice. Idle workers can then take over hard subtrees instead of sitting idle while a few leaves hold the bound.
+* **Result** (KPI pass 1 setup plus slicing, seed 0, 408 s limit; KPI pass 1 had gap 3.0e-4 at 408 s; COPT logged 272 s):
+
+| Slice | Re-splits | Proof of 1e-5 |
+|---|---|---|
+| 30 s | 24 | 307 s |
+| **60 s** | 4 | **197 s (0.72x COPT)** |
+
+* **Verdict**: capopt's first win against COPT's logged time on a scenario. KPI pass 2 repeats all six scenarios with 60 s slices.
