@@ -124,8 +124,8 @@ def solve(model: Model, trace: Trace | None = None, source: str = "highs", threa
         vals = np.asarray(sol.col_value)
         if len(vals) == len(model.builder.cost):
             starts = model.starts_from_solution(vals)
-            mobj = info.objective_function_value
-    res = SolveResult(status, secs, mobj, info.mip_dual_bound, starts, int(info.mip_node_count))
+            mobj = model.user(info.objective_function_value)
+    res = SolveResult(status, secs, mobj, model.user(info.mip_dual_bound), starts, int(info.mip_node_count))
     return res
 
 

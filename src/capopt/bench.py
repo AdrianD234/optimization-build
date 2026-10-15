@@ -94,7 +94,7 @@ def run_isolated(config: str, name: str, time_limit: float = 900.0, seed: int = 
     cmd = [sys.executable, "-m", "capopt.cli", "bench", "--configs", config, "--instances", name, "--seeds", str(seed),
            "--time-limit", str(time_limit), "--no-isolate", "--out-dir", str(out_dir)]
     t = time.time()
-    proc = subprocess.Popen(cmd, env=env)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL)  # the parent prints the summary line
     try:
         proc.wait(timeout=time_limit + grace)
         rec = json.loads((d / f"{name}_s{seed}.json").read_text(encoding="utf-8"))
@@ -147,8 +147,11 @@ def mindopt_rows() -> dict[str, dict[str, Any]]:
     out = {}
     for name, rec in d["instances"].items():
         c = rec["mindopt_cold"]
+        # time to best-known is recomputed from the log trace exactly as tools/write_benchmark_md.py does
+        # (the log prints 7 significant figures, hence the 1e-6 relative tolerance)
+        tbk = time_to(c["trace"], rec["best_known_objective"], 1e-6)
         out[name] = {"time_to_1pct": c["time_to_within_1pct_s"], "time_to_0.1pct": c["time_to_within_0.1pct_s"],
-                     "time_to_best_known": c["time_to_best_known_s"],
+                     "time_to_best_known": tbk,
                      "time_to_proof": c["seconds"] if c["status"] == "OPTIMAL" else None,
                      "seconds": c["seconds"], "status": c["status"], "gap": c["gap"]}
     return out

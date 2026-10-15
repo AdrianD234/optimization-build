@@ -106,7 +106,8 @@ def test_lp_relaxation_equal_across_encodings(instances):
             h = highspy.Highs()
             h.setOptionValue("output_flag", False)
             h.setOptionValue("solve_relaxation", True)
-            last_year_model(inst, 18, enc, bal).builder.to_highs(h)
+            m = last_year_model(inst, 18, enc, bal)
+            m.builder.to_highs(h)
             h.run()
-            vals.append(h.getInfo().objective_function_value)
+            vals.append(m.user(h.getInfo().objective_function_value))
     assert max(vals) - min(vals) <= 1e-6 * abs(vals[0])  # Artigues 2017: same LP bound

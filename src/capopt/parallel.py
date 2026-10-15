@@ -107,7 +107,7 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(h.getInfo().objective_function_value, splits, cand[:8])
+    return Node(model.user(h.getInfo().objective_function_value), splits, cand[:8])
 
 
 def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[Node], int]:
@@ -158,7 +158,7 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) ->
     h = _highs(model, splits, False, time_limit, seed)
     if h is None:
         return {"status": "empty", "bound": np.inf, "found": []}
-    h.setOptionValue("objective_bound", float(_W["best_val"].value))
+    h.setOptionValue("objective_bound", model.solver_units(float(_W["best_val"].value)))
     found = []
 
     def on_improve(e):
@@ -168,7 +168,7 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) ->
         _offer(st, obj)
 
     def on_interrupt(e):
-        if e.data_out.mip_dual_bound >= _W["best_val"].value - 1e-9 * abs(_W["best_val"].value):
+        if model.user(e.data_out.mip_dual_bound) >= _W["best_val"].value - 1e-9 * abs(_W["best_val"].value):
             e.data_in.user_interrupt = True
 
     h.cbMipImprovingSolution.subscribe(on_improve)
@@ -177,12 +177,13 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) ->
     info = h.getInfo()
     status = h.modelStatusToString(h.getModelStatus())
     best = _W["best_val"].value
-    bound = info.mip_dual_bound
+    bound = model.user(info.mip_dual_bound)
     if status in ("Infeasible",) or (status != "Optimal" and bound >= best - 1e-9 * abs(best)):
         bound = np.inf if status == "Infeasible" else max(bound, best)
         status = "pruned"
     elif status == "Optimal":
-        bound = max(bound, info.objective_function_value) if info.objective_function_value < np.inf else bound
+        obj = model.user(info.objective_function_value)
+        bound = max(bound, obj) if obj < np.inf else bound
     return {"status": status, "bound": float(bound), "found": found, "nodes": int(info.mip_node_count)}
 
 
@@ -230,7 +231,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> d
         tries += 1
         if h is None:
             continue
-        h.setOptionValue("objective_bound", float(cur_val))
+        h.setOptionValue("objective_bound", model.solver_units(float(cur_val)))
         h.setSolution(_vec_solution(model, cur))
         h.run()
         status = h.modelStatusToString(h.getModelStatus())

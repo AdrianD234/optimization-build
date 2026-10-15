@@ -49,7 +49,7 @@ def lp_bound(inst: I.Instance, L: int) -> float:
     h.run()
     if h.getModelStatus() != highspy.HighsModelStatus.kOptimal:
         return np.inf
-    return h.getInfo().objective_function_value
+    return m.user(h.getInfo().objective_function_value)
 
 
 def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = None,
