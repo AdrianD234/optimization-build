@@ -337,3 +337,16 @@ Setup: KPI pass 2 (warm start, 16 ALNS workers after the ramp-up with 15 s patie
 
 * **Primary KPI** (shifted geometric mean of capopt time / COPT time, 10 s shift), with s2000_P50 counted at its 300 s limit: **0.93**. This is a lower bound, because s2000_P50 was not proven, and it is a single seed; the KPI rule needs the median of 3 seeds.
 * capopt now beats COPT's logged time on three of the six scenarios: the CFADS P50, P50high and P95high cases. The s2000 pair is primal-limited: LNS only starts after the 25 s ramp-up, then reaches -1.2e-4 within about 10 s (E24).
+
+### E24: an all-worker LNS burst (10 s) before the ramp-up
+
+* Option `lns_first`: with an incumbent in hand, all 20 workers run LNS for this long before the ramp-up, so the ramp-up prunes against a better cutoff and LNS starts earlier.
+* **Result** (KPI pass 4 setup plus a 10 s burst, seed 0):
+
+| Scenario | KPI pass 4 | E24 |
+|---|---|---|
+| s2000_P50high | proven 107 s | not proven by 300 s (gap 1.1e-5) |
+| s2000_P50 | gap 2.2e-5 at 300 s | gap 1.5e-5 at 300 s (new best schedule, -1.42e-4) |
+| cfadsds_P50 | proven 172 s | proven 194 s |
+
+* **Verdict**: no gain. The burst finds 76 improvements in 12 s, but the ramp-up prunes the same number of nodes (189 vs 190), and the two runs move in opposite directions on the s2000 pair. The option stays, off by default.
