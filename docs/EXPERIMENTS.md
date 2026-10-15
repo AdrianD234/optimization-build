@@ -72,6 +72,14 @@ Each experiment states its hypothesis, protocol and result, and links to its sto
 * **HiGHS process-wide scheduler.** After any HiGHS run with the default thread count, a later `threads=1` run in the same process fails with model status "Not Set". `solve.new_highs()` now pins thread counts and resets the scheduler when the count changes (regression test in `tests/test_cuts_and_scaling.py`).
 * **Concurrent appends on Windows.** Several Python processes appending (`>>`) to one file through Git Bash overwrite each other's lines, which looked like silently lost runs. Every run now writes its own file.
 * **HiGHS ignoring its time limit** on the reference model for raw_nopenalty: the run was still going after 30 minutes on a 900 s limit. The benchmark watchdog (`bench.run_isolated`) kills it at limit + 180 s and rebuilds the record from the streamed incumbent trace. MindOpt runs are exempt from killing (licence seat; see `mindopt_runner.py`).
+* **A background benchmark died at launch and nobody noticed for about 50 minutes** (2026-10-15).
+  * **What happened:** the holdout session started its 48-run benchmark in the background from the Bash tool at 17:16. At 18:08 there were no solver processes, the log folder was empty and there were no result files. The agent was still waiting on a notification that never came.
+  * **Root cause:** a detached shell job (`&`) that can die silently, with nothing checking that it had started or was still alive.
+  * **Fix:** `capopt campaign` (`src/capopt/campaign.py`).
+    * The runner keeps a heartbeat file and is started detached by a launcher that verifies the heartbeat within 60 s.
+    * `capopt status` and `capopt watch` report STALLED within 5 minutes of a dead runner, a frozen heartbeat or an overdue run.
+    * The agent runbook (MASTER_PLAN §7) forbids bare `&` for long jobs and requires a watcher.
+  * **Tests:** `tests/test_campaign.py`, including a real kill of a detached runner.
 
 ## Parallel ladder I3-I6 (20 workers, 3 repeats each, machine otherwise idle)
 
