@@ -31,7 +31,9 @@ from capopt.evaluate import evaluate  # noqa: E402
 
 SPEND_SCALE, PV_SCALE = 100, 10_000
 TIERS_DEFAULT = [(0.12, 1000.0), (0.15, 4000.0), (0.20, 12000.0)]
-MAX_STARTS = 100  # the CPO notebook model's cap on project starts per year (binds in 2026 on the envelope runs)
+CPO_START_CAP = 100  # the CPO notebook model's cap on project starts per year (binds in 2026 on the envelope runs).
+#                     capopt's default model drops it (user decision, 2026-10-15); capped copies "<name>_startcap100"
+#                     are kept only as the like-for-like reference for COPT's logged times.
 
 # instance name -> CPO GPS27 preset file ("objective best" = pure optimisation, nothing pinned; Total dimension)
 SCENARIOS = {
@@ -64,7 +66,7 @@ def project_number(name: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def build(pkl: Path, name: str, objective: str = "production") -> tuple[dict, dict, dict]:
+def build(pkl: Path, name: str, objective: str = "production", start_cap: int | None = None) -> tuple[dict, dict, dict]:
     o = pickle.loads(pkl.read_bytes())
     costs = o["inputs"]["costs_input_df_M"]
     kernel = o["inputs"]["benefits_kernel_df"]
@@ -111,7 +113,7 @@ def build(pkl: Path, name: str, objective: str = "production") -> tuple[dict, di
                          "spend_nonzero": [bool(a != 0.0) for a in prof],
                          "allowed_starts": allowed, "pv_int": pv})
     inst = {
-        "name": name if penalised else f"{name}_purePV",
+        "name": (name if penalised else f"{name}_purePV") + ("" if start_cap is None else f"_startcap{start_cap}"),
         "description": f"CPO GPS27 preset '{pkl.stem}': {len(projects)} projects, {T}-year horizon {base}-{base + T - 1}, "
                        + ("production objective (holding-cash tiers)" if penalised else "maximise PV only"),
         "objective": "production" if penalised else "pure_pv",
@@ -119,7 +121,7 @@ def build(pkl: Path, name: str, objective: str = "production") -> tuple[dict, di
         "T": T, "base_year": base,
         "units": {"spend_and_cash": "1 unit = $0.01M (real)", "pv_int": "PV of benefits in $ x 10,000 (integer)"},
         "funding_S": [int(round(f * SPEND_SCALE)) for f in funding_m],
-        "max_starts_per_year": MAX_STARTS,
+        "max_starts_per_year": len(costs.index) if start_cap is None else start_cap,  # no cap unless requested
         "weights": {"backlog_weight": float(meta.get("backlog_weight", 1.0)) if penalised else 0.0,
                     "pv_weight": float(meta.get("pv_weight", 1e-4)) if penalised else 1.0},
         "tiers": {"base_cap_frac": tiers[0][0],
@@ -141,6 +143,15 @@ def build(pkl: Path, name: str, objective: str = "production") -> tuple[dict, di
     return inst, sol, checks
 
 
+def _write(out: Path, inst: dict, sol: dict, chk: dict, objective: str) -> None:
+    (out / "instances" / f"{inst['name']}.json").write_text(json.dumps(inst, separators=(",", ":")), encoding="utf-8")
+    if objective == "production":
+        (out / "solutions" / f"{inst['name']}_cpo_reference.json").write_text(json.dumps(sol, indent=1), encoding="utf-8")
+    print(f"[{inst['name']}] {chk['projects']} projects, T={chk['T']} | PV coeff worst rel diff "
+          f"{chk['worst_pv_rel_diff']:.1e} | PV total rel diff {chk['pv_total_rel_diff']:.1e} | CPO schedule "
+          f"feasible: {chk['reference_feasible']} {chk['reason'] or ''}| CPO gap {sol['cpo_gap']}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("presets", help="CPO legacy/scenario_sets/presets/GPS27 folder (read-only)")
@@ -156,14 +167,9 @@ def main() -> int:
     for name, fname in SCENARIOS.items():
         pkl = Path(a.presets) / fname
         for objective in (("production", "pure_pv") if a.pure_pv else ("production",)):
-            inst, sol, chk = build(pkl, name, objective)
-            (out / "instances" / f"{inst['name']}.json").write_text(json.dumps(inst, separators=(",", ":")), encoding="utf-8")
-            if objective == "production":
-                (out / "solutions" / f"{inst['name']}_cpo_reference.json").write_text(json.dumps(sol, indent=1),
-                                                                                   encoding="utf-8")
-            print(f"[{inst['name']}] {chk['projects']} projects, T={chk['T']} | PV coeff worst rel diff "
-                  f"{chk['worst_pv_rel_diff']:.1e} | PV total rel diff {chk['pv_total_rel_diff']:.1e} | CPO schedule "
-                  f"feasible: {chk['reference_feasible']} {chk['reason'] or ''}| CPO gap {sol['cpo_gap']}")
+            for cap in (None, CPO_START_CAP):  # default: no start cap; capped copy = COPT-comparable reference
+                inst, sol, chk = build(pkl, name, objective, cap)
+                _write(out, inst, sol, chk, objective)
     return 0
 
 

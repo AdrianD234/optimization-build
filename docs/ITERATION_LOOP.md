@@ -87,3 +87,23 @@ Rules that follow:
 Research notes for this backlog: [research/HYBRID_AND_CROSSFIELD.md](research/HYBRID_AND_CROSSFIELD.md) (MindOpt↔HiGHS exchange, the MindOpt benchmark protocol, cross-field techniques). Its root-LP diagnostic finds reduced-cost fixing removes only about 1.5% of columns at the root gap, so H6 should target sub-MIPs and nodes rather than the root. If H2 is picked, build it as H11 (construction) + H10 (improvement).
 
 **Parked: the native local-search theme (H2 via H10 + H11).** Two variants failed stage (a) on all 3 screening scenarios: the greedy cash-safe construction, and alpha-point construction with cash repair followed by adaptive-weight local search. The local search ran at 6-8M moves/s but stalled within 2 s at +4% to +21% from the CPO objective; single-thread LNS reaches +0.88% in 90 s. Reason: on this data any one- or two-project move shifts spend between years and breaks the cumulative cash balance or lands in the steep tiers. Good moves need several projects to move together, which sub-MIP neighbourhoods (LNS, H12, H13) do and move-based searches don't. Reopen only with compound, cash-balanced moves (e.g. ejection chains that keep every year's cumulative balance), or as a polisher inside a sub-MIP framework.
+
+## Model decision: no start-count cap (2026-10-15)
+
+The CPO model capped project starts at 100 per year, which binds in 2026 on the envelope scenarios. **capopt's default model now has no start cap** (user decision). `tools/extract_cpo.py` writes the uncapped instances under the scenario names, plus `<name>_startcap100` copies that are kept *only* as the like-for-like reference for COPT's logged times, since COPT solved the capped model. Removing the cap barely changes the root LP bound: -0.565% → -0.568% (s2000_P50high), -0.574% → -0.577% (s2000_P50), and -0.142% unchanged (cfadsds_P50). So the cap is not the source of the difficulty (this answers Q5 below at the root). Results recorded before this date used the capped model.
+
+## Research questions (Q-list, 2026-10-15)
+
+| # | Question | Why it matters | Cheap test | Status |
+|---|---|---|---|---|
+| Q1 | Have we over-fitted to s2000_P50high? | Nearly all tuning used one scenario | Current best config once across all 8 timed scenarios | queued |
+| Q2 | Does a warm start (H14 donor) close most of the gap to COPT? | COPT's times were warm-started; the real workflow is batches of related scenarios | Seed from a sibling scenario's optimum, then time to 1e-5 | queued |
+| Q3 | What gap is decision-relevant? | 1e-5 of about $95B is about $1M of PV; 0.01% (about $10M) may be enough | User decision, then re-score stored runs | needs the user |
+| Q4 | How different are near-optimal schedules? | Firm vs swappable projects is more useful to planners than one schedule | Pool all schedules within 0.01%; per-project start-year ranges | queued |
+| Q5 | Does the start cap drive the difficulty? | It bound in 2026 | Root LP with and without the cap | answered at the root: no (see above) |
+| Q6 | Where does hardness come from (envelope tightness)? | Slack is about 0.8%; predicts which scenarios will be slow | Envelope sweep $1.5B-$2.5B: root gap and time to 0.1% | queued |
+| Q7 | How does it scale with programme size? | Programmes grow | Project subsets of 150 / 200 / 233 | queued |
+| Q8 | How fast is an incremental re-solve? | Re-optimising after a cost update | Perturb 1-5 projects, warm start, time to 0.1% | queued |
+| Q9 | Is a deterministic mode needed (audit)? | The parallel solver can return different equal-value schedules | User decision | needs the user |
+| Q10 | Fork HiGHS for an in-run cutoff update? | The branching research's most valuable small fork | Decide after the E1/E2 screen | pending E1/E2 |
+
