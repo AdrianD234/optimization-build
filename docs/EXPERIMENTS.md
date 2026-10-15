@@ -168,3 +168,17 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 * **Result** (60-leaf ramp-up, best-known incumbent as cutoff): the worst open leaf closes **99.7%** of the root gap with k = 8, against 74.7% for the default rule. Ramp-up time goes from 22 s to 217 s: a child LP needs about 1,300 dual simplex iterations (about 120 ms) even when warm-started, because one split moves a large project.
 * **Verdict**: the bound effect is large, but it needs the child LPs run in parallel on the pool (next experiment). It stays off by default.
 * **Bug found**: the cached node-LP solver had a 60 s time limit, which HiGHS counts over the solver's whole life. After 60 s of LP work every node returned "time limit", and `_lp_node` read that as infeasible (pruned). Default CPO runs never reached it (ramp-up about 21 s, no re-splits), so no reported result changes. The fix: no time limit; only proven infeasibility prunes; any other status triggers a cold retry, then an error. Covered by a regression test.
+
+### E12: strong branching on the worker pool (batched ramp-up)
+
+* The candidates' child LPs run as pool tasks, and the `width` best open nodes are expanded together so the pool stays busy. On an idle pool, k = 4 ramps up 60 leaves in 24.5 s (the default rule takes 22 s) and prunes 195 nodes, against 19. k = 8 takes 40 s. With 16 LNS workers holding the pool, k = 4 takes about 28-40 s.
+* **Screen** (300 s, cutoff after 60 s, k = 4):
+
+| LNS workers x 280 s | Seeds | Gap at 300 s | Final schedule vs the CPO's |
+|---|---|---|---|
+| 16 | 0 / 1 / 2 | 4.0e-5 / 6.8e-4 / 3.0e-4 (median 3.0e-4) | -1.06e-4 / +1.37e-4 / -3.5e-5 |
+| 18 | 0 | 5.3e-4 | -1.2e-5 |
+| 8 | 0 | 2.1e-4 | -9.0e-5 |
+| 4 | 0 | 9.1e-4 | +3.1e-4 |
+
+* **Verdict**: a median of 3.0e-4 against C1's 3.5e-4 (same setup without strong branching) is within noise. Strong branching stays available as an option, off by default. Across E2/E10/E12 the gap at 300 s tracks the schedule found: every run whose schedule beat the CPO's by about 1e-4 or more closed to 4e-5 or better, and none of the others did. More LNS workers do not fix this, because they all search around the same shared incumbent. **The bottleneck is now the primal side**: finding the near-optimal schedule reliably.
