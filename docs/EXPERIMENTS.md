@@ -414,3 +414,13 @@ From 2026-10-16, an external sampler logs the machine's CPU load outside capopt 
   * Documented as prerequisites for ever combining racing with stealing or slicing: B3 (stealing and racing working against each other) and B4 (racers giving way to queued work).
 * **Verdict**: correct, with a gain of 0-15%, inside seed noise. The audit measured the same thing directly on HiGHS: seeds change node counts up to 4.2x on a leaf, the best of 4 seeds is 1.3x faster, but the run's critical path improves only 7%. That matches the literature: racing ramp-up has not proven effective in ParaSCIP (Koch et al. 2012, Carvajal et al. 2014). Using all cores may also cost the bound-holding leaves their single-core boost clock. Racing stays opt-in and off. The remaining tail lever is BRANCHING_AND_TREE E4 (hedged re-split: the parent keeps running while its children use the idle workers).
 * Side check from the audit: HiGHS's `mip_abs_gap=1e-6` is in scaled solver units. After auto-scaling it is at most 2e-6 objective units on the CPO models (about 0.01 on the no-penalty pack), against a 1e-5 relative tolerance of about 1e6 units, so it cannot close a leaf early.
+
+### E29: more leaves on the CFADS scenarios (200 instead of 60; CFADS_BOUND_STALL #2(a))
+
+| Scenario | KPI pass 4 (60 leaves) | E29 (200 leaves) | Load tag |
+|---|---|---|---|
+| cfadsds_P50 | 172 s | 321 s: the ramp-up alone took 312 s (437 pruned), then 9 s of tree | contended (1.6 mean) |
+| cfadsds_P95 | 658 s | 575 s: **the ramp-up alone proved L = 43** (383 s, 384 pruned, no HiGHS tree work), then L = 42 | contended (2.1 mean, 8.6 peak) |
+
+* **Verdict**: no gain, not adopted. With 16-candidate strong branching, the batched LP ramp-up is expensive per expansion, and 200 leaves turns it into most of the run.
+* **Finding**: on cfadsds_P95 the outer strong-branching LP tree on 20 workers **proved a whole last year by itself**, about as fast as the HiGHS leaves usually do (369-480 s). That is real evidence for GAP_ANATOMY #2 (a persistent outer LP tree as the proof engine, handing HiGHS only the tail).
