@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 PACK = Path(__file__).resolve().parents[2] / "benchmark_pack"
+HOLDOUT = PACK.parent / "benchmarks" / "holdout"  # perturbed instances, written by `capopt holdout`
 INSTANCE_NAMES = ["P100_raw_penalised", "P100_growth_penalised", "P100_raw_nopenalty", "P100_growth_nopenalty"]
 
 
@@ -90,12 +91,32 @@ def from_dict(raw: dict[str, Any]) -> Instance:
     )
 
 
-def load(name_or_path: str | Path) -> Instance:
+def path_of(name_or_path: str | Path) -> Path:
+    """An instance file: a path as given, else a pack instance name, else a holdout instance name."""
     path = Path(name_or_path)
-    if not path.suffix:
-        path = PACK / "instances" / f"{name_or_path}.json"
-    return from_dict(json.loads(path.read_text(encoding="utf-8")))
+    if path.suffix:
+        return path
+    pack = PACK / "instances" / f"{name_or_path}.json"
+    return pack if pack.exists() or not (HOLDOUT / f"{name_or_path}.json").exists() else HOLDOUT / f"{name_or_path}.json"
+
+
+def name_of(name_or_path: str | Path) -> str:
+    """The instance name used for result files: the file stem for a path, the name itself otherwise."""
+    return Path(name_or_path).stem if Path(name_or_path).suffix else str(name_or_path)
+
+
+def holdout_names() -> list[str]:
+    return sorted(p.stem for p in HOLDOUT.glob("*.json"))
+
+
+def load(name_or_path: str | Path) -> Instance:
+    return from_dict(json.loads(path_of(name_or_path).read_text(encoding="utf-8")))
 
 
 def best_known(name: str) -> dict[str, Any]:
     return json.loads((PACK / "solutions" / f"{name}_best_known.json").read_text(encoding="utf-8"))
+
+
+def best_known_objective(name: str) -> float | None:
+    """The pack's best-known objective, or None for an instance outside the pack (holdout, synthetic)."""
+    return best_known(name)["objective"] if name in INSTANCE_NAMES else None
