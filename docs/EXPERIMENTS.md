@@ -299,3 +299,13 @@ Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 A
   2. **Survivors ran with default settings** (no slicing, no strong branching, no cutoff).
   3. **LNS was dead.** The CPO schedule ends in L = 43, but the solver started with L0 = 42, where 7 of the warm schedule's start years are not options. Every neighbourhood fixing any of them was infeasible: about 11,000 sub-MIPs, 212 real solves, 0 improvements.
 * **Fixes**: the absolute time limit is passed through; survivors get the same tree settings with the cutoff from the start; a warm start's own last year is solved first; LNS frees any project whose incumbent start is not an option of the current model. A regression test covers the late-warm-start case.
+
+## KPI pass 3: the P95 scenarios with the fixes
+
+| Scenario | COPT logged | Result (60 s slices, fixes in) |
+|---|---|---|
+| cfadsds_P95 | 433 s | not proven by 669 s: L = 43 (the warm schedule's) at gap 1.6e-3 after 650 s; LNS now works (32 wins, schedule 1.5e-6 better than the CPO's) |
+| cfadsds_P95high | 1,770 s | **L = 43 proven at 893 s**; L = 42 got the last 17 s, so the whole problem is not proven (gap 1.6e-3 from L = 42) |
+
+* On the P95 scenarios both L = 42 and L = 43 are hard. They are solved one after the other, so the second never gets enough time.
+* The research report `docs/research/CFADS_BOUND_STALL.md` explains the stall. The CFADS funding stream (0.5-1.64x its mean, binding in 29 of 38 years) spreads the gap over many projects. The default branching rule and 4-candidate strong branching miss the good splits. The product score is inflated by children that overshoot the cutoff. E22 tests the report's top rule.
