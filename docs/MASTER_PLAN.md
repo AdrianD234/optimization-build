@@ -47,6 +47,10 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 * `docs/research/MILP_FRONTIER.md`: 41 papers with 15 ranked, testable ideas, plus calibration (Mittelmann, Oct 2026: HiGHS about 5x slower than the best commercial solver on MIPLIB, so the gains must come from structure and parallelism).
 * `docs/research/AI_MATH_RESULTS.md`: OpenAI and DeepMind AI-for-maths releases (IMO gold, Erdős results, the `openai/math` manuscripts, AlphaEvolve, FunSearch). The verdict is that no theorem in them speeds up this MILP. The transferable part is the *method*: an LLM proposes code and an exact scorer judges it. That becomes Phase 6.
 
+## 3a. Real-data validation and the iteration loop
+
+Validation has moved from perturbed copies of the pack to the Capital Programme Optimiser's real 233-project GPS27 scenarios (data under the gitignored `private/`). The target is COPT's logged solve times. How we iterate toward them (scoreboard, KPI, screen, full campaign, review, converge or back-off rules, ranked backlog) is in [ITERATION_LOOP.md](ITERATION_LOOP.md).
+
 ## 3b. Status (2026-10-15)
 
 | Phase | Status |
