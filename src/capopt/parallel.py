@@ -253,10 +253,10 @@ _W: dict = {}
 
 
 def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9, live=None,
-          steal=None):
+          steal=None, proof_options=None):
     model = last_year_model(I.load(name), L, encoding, balance)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
-              cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal)
+              cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal, proof_options=proof_options or {})
 
 
 def _load_cuts() -> None:
@@ -295,6 +295,9 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
         return {"status": "empty", "bound": np.inf, "found": []}
     if leaf_cutoff:  # start the leaf with the shared incumbent as HiGHS' objective bound (exp05: can hurt)
         h.setOptionValue("objective_bound", model.solver_units(float(_W["best_val"].value)))
+        for key, val in _W.get("proof_options", {}).items():  # E30: proof-phase settings (e.g. no heuristics)
+            if h.setOptionValue(key, val) != highspy.HighsStatus.kOk:  # highspy only returns an error status
+                raise ValueError(f"HiGHS rejected proof option {key}={val!r}")
     found = []
 
     def on_improve(e):
@@ -477,7 +480,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_after_rampup: bool = False, lns_patience: float | None = None,
                    lns_alns: bool = False, lns_first: float = 0.0,
                    steal_after: float | None = None, race_after: float | None = None,
-                   max_racers: int = 4) -> ParallelResult:
+                   max_racers: int = 4, proof_options: dict | None = None) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -508,6 +511,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         running copy has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
         (optimal, pruned, infeasible) closes it and the others are stopped; a group ending open is re-split or closed
         only when its last copy ends, with the best bound any copy reached. None = off.
+    proof_options (E30): HiGHS options set on proof-phase leaves only (those launched with the incumbent cutoff), e.g.
+        {"mip_heuristic_effort": 0.0} once the schedule search is LNS's job.
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
@@ -556,7 +561,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     cuts_path.unlink()  # workers read it only after the master has written it
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
-                                         str(cuts_path) if cut_rounds else None, rel_gap, live, steal))
+                                         str(cuts_path) if cut_rounds else None, rel_gap, live, steal,
+                                         proof_options))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:

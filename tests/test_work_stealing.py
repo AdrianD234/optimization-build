@@ -61,3 +61,16 @@ def test_racing_happens_and_the_proven_optimum_is_unchanged(best_known):
     races = sum(int(re.search(r"races: (\d+)", line).group(1)) for line in util)
     assert races > 0, util
     assert r.proven and r.objective == pytest.approx(best_known[name]["objective"], rel=1e-9)
+
+
+def test_proof_options_reach_proof_phase_leaves_only(best_known):
+    """E30: options apply to leaves launched with the cutoff; the answer must not change."""
+    name = "P100_growth_penalised"
+    r = solver.solve(name, workers=4, time_limit=120, n_leaves=4, quick_seconds=0, cutoff_after=0.0,
+                     proof_options={"mip_heuristic_effort": 0.0})
+    assert r.proven and r.objective == pytest.approx(best_known[name]["objective"], rel=1e-9)
+    _, live, steal = _worker_state(name, 18)
+    P._W["proof_options"] = {"mip_heuristic_effort": 0.0, "no_such_option": 1}
+    with pytest.raises(Exception):  # a bad option name must fail loudly, not be silently ignored
+        P._solve_leaf([], 1.0, 0, time.time(), True, 0, -np.inf)
+    P._W.clear()
