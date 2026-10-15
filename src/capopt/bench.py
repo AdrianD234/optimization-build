@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import platform
 import subprocess
@@ -23,6 +24,9 @@ from . import solver
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
 REPORT = ROOT / "benchmarks" / "BENCHMARK.md"
+HOLDOUT_DIR = "holdout"  # holdout runs go to <results>/holdout/<config>/, apart from the pack runs
+HOLDOUT_CONFIGS = ["capopt_parallel", "capopt_quick", "capopt_quick_cuts", "capopt_quick_nocut"]
+SGM_SHIFT = 10.0  # seconds, as in Mittelmann's MILP benchmarks
 
 
 def _referee():
@@ -34,7 +38,7 @@ def _referee():
 
 def referee_score(name: str, starts: dict[str, int]) -> dict[str, Any]:
     ref = _referee()
-    inst = ref.prepare(ref.load(I.PACK / "instances" / f"{name}.json"))
+    inst = ref.prepare(ref.load(I.path_of(name)))
     r = ref.evaluate(inst, starts)
     return {"feasible": r["feasible"], "objective": r.get("objective"), "reason": r.get("reason")}
 
@@ -89,10 +93,19 @@ def _mindopt_result(name: str, time_limit: float, out_dir: Path) -> solver.Resul
                          [f"MindOpt {r['status']} gap {r.get('gap')} in {r['seconds']}s (build {r['build_seconds']}s)"])
 
 
+def _target(name: str, objective: float) -> tuple[float | None, float]:
+    """(pack best-known or None, the target for time-to metrics). Outside the pack there is no best-known, so the
+    run's own final objective stands in; the holdout report re-targets every run to the best across configs."""
+    best = I.best_known_objective(name)
+    return best, (objective if best is None else best)
+
+
 def run(config: str, name: str, time_limit: float = 900.0, seed: int = 0, out_dir: Path = RESULTS) -> dict[str, Any]:
+    """One configuration on one instance. `name` is a pack or holdout instance name, or a path to an instance JSON."""
     rung, desc, fn = CONFIGS[config]
     t = time.time()
     r = _mindopt_result(name, time_limit, out_dir) if config == "mindopt_cold" else fn(name, time_limit, seed)
+    name = I.name_of(name)
     if isinstance(r, dict):  # MindOpt could not run here: record why; the report keeps the pack's recorded run
         rec = {"config": config, "rung": rung, "instance": name, "seed": seed, "skipped": r["skipped"],
                "generated": datetime.now().isoformat(timespec="seconds"), "machine": machine()}
@@ -100,15 +113,15 @@ def run(config: str, name: str, time_limit: float = 900.0, seed: int = 0, out_di
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{name}_s{seed}.skipped.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
         return rec
-    best = I.best_known(name)["objective"]
-    ref = referee_score(name, r.starts) if r.starts else {"feasible": False}
+    best, target = _target(name, r.objective)
+    ref = referee_score(r.instance, r.starts) if r.starts else {"feasible": False}
     rec = {
         "config": config, "rung": rung, "description": desc, "instance": name, "seed": seed,
         "generated": datetime.now().isoformat(timespec="seconds"), "machine": machine(), "time_limit": time_limit,
-        "objective": r.objective, "referee": ref, "best_known": best, "proven": r.proven, "dual_bound": r.dual_bound,
-        "seconds": round(r.seconds, 2), "wall_seconds": round(time.time() - t, 2), "trace": r.trace,
-        "time_to_1pct": time_to(r.trace, best, 0.01), "time_to_0.1pct": time_to(r.trace, best, 0.001),
-        "time_to_best_known": time_to(r.trace, best, 1e-6),
+        "objective": r.objective, "referee": ref, "best_known": best, "target": target, "proven": r.proven,
+        "dual_bound": r.dual_bound, "seconds": round(r.seconds, 2), "wall_seconds": round(time.time() - t, 2),
+        "trace": r.trace, "time_to_1pct": time_to(r.trace, target, 0.01), "time_to_0.1pct": time_to(r.trace, target, 0.001),
+        "time_to_best_known": time_to(r.trace, target, 1e-6),
         "time_to_proof": round(r.seconds, 2) if r.proven else None,
         "last_years": {str(k): v for k, v in r.last_years.items()}, "log": r.log, "starts": r.starts,
     }
@@ -122,12 +135,13 @@ def run_isolated(config: str, name: str, time_limit: float = 900.0, seed: int = 
                  grace: float = 180.0) -> dict[str, Any]:
     """`run` in a child process with a hard wall-clock limit (time_limit + grace). If the child has to be killed (a
     solver that ignores its time limit), the record is rebuilt from the streamed incumbent trace and marked killed."""
+    path, name = name, I.name_of(name)
     d = out_dir / config
     d.mkdir(parents=True, exist_ok=True)
     trace_file = d / f"{name}_s{seed}.trace.jsonl"
     trace_file.unlink(missing_ok=True)
     env = dict(os.environ, CAPOPT_TRACE_FILE=str(trace_file))
-    cmd = [sys.executable, "-m", "capopt.cli", "bench", "--configs", config, "--instances", name, "--seeds", str(seed),
+    cmd = [sys.executable, "-m", "capopt.cli", "bench", "--configs", config, "--instances", str(path), "--seeds", str(seed),
            "--time-limit", str(time_limit), "--no-isolate", "--out-dir", str(out_dir)]
     t = time.time()
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL)  # the parent prints the summary line
@@ -152,7 +166,7 @@ def run_isolated(config: str, name: str, time_limit: float = 900.0, seed: int = 
         else:
             proc.kill()
         proc.wait()
-        rec = _record_from_trace(config, name, seed, time_limit, trace_file, time.time() - t)
+        rec = _record_from_trace(config, path, seed, time_limit, trace_file, time.time() - t)
         (d / f"{name}_s{seed}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
     trace_file.unlink(missing_ok=True)
     return rec
@@ -170,13 +184,14 @@ def _record_from_trace(config, name, seed, time_limit, trace_file: Path, secs: f
             starts = r["starts"]
     inst = I.load(name)
     sd = inst.starts_to_dict(starts) if starts else None
-    best = I.best_known(name)["objective"]
-    return {"config": config, "rung": rung, "description": desc, "instance": name, "seed": seed,
+    best, target = _target(I.name_of(name), run_best)
+    return {"config": config, "rung": rung, "description": desc, "instance": I.name_of(name), "seed": seed,
             "generated": datetime.now().isoformat(timespec="seconds"), "machine": machine(), "time_limit": time_limit,
             "objective": run_best, "referee": referee_score(name, sd) if sd else {"feasible": False}, "best_known": best,
-            "proven": False, "dual_bound": None, "seconds": round(secs, 2), "wall_seconds": round(secs, 2),
-            "trace": trace, "time_to_1pct": time_to(trace, best, 0.01), "time_to_0.1pct": time_to(trace, best, 0.001),
-            "time_to_best_known": time_to(trace, best, 1e-6), "time_to_proof": None, "last_years": {},
+            "target": target, "proven": False, "dual_bound": None, "seconds": round(secs, 2),
+            "wall_seconds": round(secs, 2), "trace": trace, "time_to_1pct": time_to(trace, target, 0.01),
+            "time_to_0.1pct": time_to(trace, target, 0.001), "time_to_best_known": time_to(trace, target, 1e-6),
+            "time_to_proof": None, "last_years": {},
             "log": [f"killed by watchdog after {secs:.0f}s (solver ignored its {time_limit:.0f}s time limit)"],
             "killed": True, "starts": sd}
 
@@ -285,6 +300,89 @@ def _headline(ref: dict, ref_label: str, res: dict) -> list[str]:
     return out
 
 
+def shifted_geomean(xs: list[float], shift: float = SGM_SHIFT) -> float:
+    return math.exp(sum(math.log(x + shift) for x in xs) / len(xs)) - shift
+
+
+def holdout_table(out_dir: Path) -> dict[str, Any]:
+    """Re-target every holdout run to its instance's best objective across configs (the best proven one if any
+    config proved it, else the best found), then compute time-to metrics per (instance, config). Misses count as
+    the run's time limit in the shifted geometric means."""
+    res = load_results(out_dir)
+    configs = [c for c in CONFIGS if any(c in by_cfg for by_cfg in res.values())]
+    keys = ("time_to_1pct", "time_to_0.1pct", "time_to_target", "time_to_proof")
+    rel = {"time_to_1pct": 0.01, "time_to_0.1pct": 0.001, "time_to_target": 1e-6}
+    cells: dict[str, dict[str, dict[str, Any]]] = {}
+    targets: dict[str, tuple[float, bool]] = {}
+    disagree: list[str] = []
+    for name, by_cfg in sorted(res.items()):
+        recs = [r for rs in by_cfg.values() for r in rs]
+        proven = [r["objective"] for r in recs if r["proven"]]
+        target = min(proven) if proven else min(r["objective"] for r in recs)
+        targets[name] = (target, bool(proven))
+        tol = 1e-9 * abs(target)
+        if any(v > target + tol for v in proven) or any(r["objective"] < target - tol for r in recs):
+            disagree.append(name)  # a proof that another run beats would be a solver bug
+        for cfg, rs in by_cfg.items():
+            c = {k: _median([time_to(r["trace"], target, rel[k]) if k in rel else r["time_to_proof"] for r in rs])
+                 for k in keys}
+            c["time_limit"] = max(r["time_limit"] for r in rs)
+            c["feasible"] = all(r["referee"].get("feasible") for r in rs)
+            cells.setdefault(name, {})[cfg] = c
+    summary = {}
+    for cfg in configs:
+        got = [by_cfg[cfg] for by_cfg in cells.values() if cfg in by_cfg]
+        fastest = 0
+        for by_cfg in cells.values():
+            proofs = [v["time_to_proof"] for v in by_cfg.values() if v["time_to_proof"] is not None]
+            mine = by_cfg.get(cfg, {}).get("time_to_proof")
+            fastest += mine is not None and mine <= 1.02 * min(proofs)
+        summary[cfg] = {
+            "instances": len(got), "proven": sum(c["time_to_proof"] is not None for c in got),
+            "feasible": all(c["feasible"] for c in got), "fastest_proofs": fastest,
+            **{f"sgm_{k}": shifted_geomean([c["time_limit"] if c[k] is None else c[k] for c in got]) for k in keys},
+        }
+    return {"configs": configs, "cells": cells, "targets": targets, "disagree": disagree, "summary": summary}
+
+
+def holdout_section(out_dir: Path) -> list[str]:
+    if not out_dir.exists():
+        return []
+    h = holdout_table(out_dir)
+    if not h["cells"]:
+        return []
+    cfgs = h["configs"]
+    out = ["## Holdout: perturbed instances", "",
+           f"{len(h['cells'])} instances from `capopt holdout` (`synthetic.perturb`: each project's spend and PV scaled by "
+           "independent factors in [0.9, 1.1]; files in `benchmarks/holdout/`), run with `capopt bench --holdout`. "
+           "The pack has no best-known values for them, so every time-to metric targets the instance's best objective "
+           "across configs: the proven optimum where any config proved one. Unreached targets and missing proofs count "
+           f"as the time limit in the shifted geometric mean (SGM, shift {SGM_SHIFT:.0f} s). 'Fastest proofs' counts "
+           "the instances where a config's proof is within 2% of the fastest.", "",
+           "| Config | Proven | Fastest proofs | SGM within 1% | SGM within 0.1% | SGM to target | SGM proof | "
+           "Referee feasible |", "|---|---|---|---|---|---|---|---|"]
+    best_sgm = min(v["sgm_time_to_proof"] for v in h["summary"].values())
+    for cfg in cfgs:
+        v = h["summary"][cfg]
+        proof = f"{v['sgm_time_to_proof']:.1f}"
+        out.append(f"| {CONFIGS[cfg][0]} {cfg} | {v['proven']}/{v['instances']} | {v['fastest_proofs']} | "
+                   f"{v['sgm_time_to_1pct']:.2f} | {v['sgm_time_to_0.1pct']:.2f} | {v['sgm_time_to_target']:.1f} | "
+                   + (f"**{proof}**" if v["sgm_time_to_proof"] == best_sgm else proof)
+                   + f" | {'yes' if v['feasible'] else 'NO'} |")
+    out += ["", "Proof time per instance (s; '-' = not proven within the time limit; fastest in bold):", "",
+            "| Instance | Target | " + " | ".join(CONFIGS[c][0] for c in cfgs) + " |", "|---|---|" + "---|" * len(cfgs)]
+    for name, by_cfg in h["cells"].items():
+        target, proven = h["targets"][name]
+        proofs = {c: by_cfg[c]["time_to_proof"] for c in cfgs if c in by_cfg}
+        fastest = min((v for v in proofs.values() if v is not None), default=None)
+        row = ["-" if proofs.get(c) is None else f"**{fmt(proofs[c])}**" if proofs[c] == fastest else fmt(proofs[c])
+               for c in cfgs]
+        out.append(f"| {name} | {target:.6e}{'' if proven else ' (not proven)'} | " + " | ".join(row) + " |")
+    out += ["", "Proven optima agree across configs: " + ("yes" if not h["disagree"] else
+            "**NO** on " + ", ".join(h["disagree"])), ""]
+    return out
+
+
 def write_report(out_dir: Path = RESULTS, path: Path = REPORT, include_mindopt: bool = False) -> str:
     """The benchmark report. Public (default): capopt vs the HiGHS baseline. include_mindopt=True adds the pack's
     recorded MindOpt runs, which are private data: write that version under private/ only."""
@@ -344,6 +442,7 @@ def write_report(out_dir: Path = RESULTS, path: Path = REPORT, include_mindopt: 
             lines.append(f"| {CONFIGS[cfg][0]} {cfg} | " + " | ".join(row) + " |")
         lines.append("")
     head = lines[:3]  # title, blank, method paragraph
-    text = "\n".join(head + [""] + _headline(ref, ref_label, res) + ["## All runs", ""] + lines[4:])
+    text = "\n".join(head + [""] + _headline(ref, ref_label, res) + ["## All runs", ""] + lines[4:]
+                     + holdout_section(out_dir / HOLDOUT_DIR))
     path.write_text(text, encoding="utf-8")
     return text
