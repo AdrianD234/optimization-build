@@ -114,3 +114,40 @@ The quick try makes time to within 1% / 0.1% at most 1.2 s on all four instances
 * **Hypothesis**: leaves start with the shared incumbent as HiGHS' `objective_bound`. In I7 that is the quick-try incumbent, and it steers HiGHS' search badly on raw_penalised.
 * **Result** (raw_penalised, 1 run each): without the static cutoff (leaves are still stopped by the interrupt callback once their dual bound reaches the incumbent), I3 takes 86 s (81 with the cutoff) and I7 takes **87 s** (105 with the cutoff).
 * **Verdict**: `leaf_cutoff` becomes an option; I9/I10 measure I7/I8 without it on all instances.
+
+## CPO screening (real data, cap-free; aggregate findings only, data stays private)
+
+All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated. Times are wall-clock from a cold start, including model build. Gaps are relative to capopt's own proven bound. Seed spread at 60 leaves is up to 7x in time to 1%, so single-seed screens only pick candidates; the KPI uses the median of 3 seeds.
+
+### H17: holding-cash policy variants (start-capped copies, 90 s x 2 seeds)
+
+| Variant | Time to 1% of the CPO schedule's score | Gap at 90 s | Peak closing balance vs the penalised optimum |
+|---|---|---|---|
+| tiers x0.01 | 1.7-12 s | 2.6e-5 | about 4x (the pure-PV hump returns) |
+| tiers x0.1 | 16-17 s | 0.2% | about 1.8x |
+| smooth (7 convex steps) | 29-31 s | 0.31% | about 1.5x |
+| pure PV, hard cap at 500 | 1 of 2 seeds found a schedule (26 s) | - | capped |
+| pure PV cap 350; tiers x0.01 cap 500 | no schedule found | - | - |
+
+* **Verdict**: softer tiers solve faster but bring back the cash hump; hard caps make feasibility hard for the parallel search. The penalised policy stays the default. The knee (tiers x0.2 / x0.3 / x0.5) is untested.
+
+### E1: live leaf bounds and a leaf census (16 LNS workers for the whole run)
+
+* Each running leaf publishes its live dual bound, so the reported global gap is exact; re-split children inherit their parent's bound.
+* **Result**: gap 3.4e-3 at 300 s, incumbent 0.19% short of the CPO objective. The census showed the worst-bound leaves had run few nodes: 16 LNS workers left only 4 for the tree, so the bound was starved, not hard.
+
+### E2: incumbent cutoff for leaves launched after 60 s (`cutoff_after=60`)
+
+* Leaves launched in the first 60 s search without a cutoff (better for finding schedules); later leaves get the shared incumbent as `objective_bound` (better for proving).
+* **Result**: gap **2.5e-5** at about 312 s (from 3.4e-3 in E1), within 1% at 27.5 s, within 0.1% at 84.4 s, and a final schedule **1.2e-4 better** than the CPO's stored optimum (which carried the start cap).
+* **Verdict**: the strongest single change so far. It needs the 3-seed confirmation (E10) before it becomes the default.
+
+### E9: phased allocation (16 LNS workers for 45 s, then all 20 on the tree) vs no LNS, both without the late cutoff
+
+| Run | Within 1% | Within 0.1% | Final schedule vs the CPO's | Gap at 300 s |
+|---|---|---|---|---|
+| phased lns16 x 45 s | 28.0 s | 103.1 s | 3.8e-4 short | 1.2e-3 |
+| control (no LNS) | 23.7 s | 74.0 s | 3.8e-4 short (the same schedule) | 1.1e-3 |
+
+* Both runs got stuck on the same schedule. In both, a single depth-6 leaf held the global bound after about 3,100-3,600 nodes.
+* **Verdict**: freeing the tree after 45 s is no better than running no LNS at all. E2's 40x tighter gap came from two things together: the long LNS phase found a better schedule than the CPO's, and the late cutoff let the tree prune against it. E10 tests the two together with 3 seeds.
