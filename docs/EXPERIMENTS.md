@@ -151,3 +151,20 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 
 * Both runs got stuck on the same schedule. In both, a single depth-6 leaf held the global bound after about 3,100-3,600 nodes.
 * **Verdict**: freeing the tree after 45 s is no better than running no LNS at all. E2's 40x tighter gap came from two things together: the long LNS phase found a better schedule than the CPO's, and the late cutoff let the tree prune against it. E10 tests the two together with 3 seeds.
+
+### E10: 3-seed confirmation (300 s each)
+
+| Config | Gap at 300 s (3 seeds) | Final schedule vs the CPO's | Within 0.1% |
+|---|---|---|---|
+| C1: lns16 x 280 s + cutoff after 60 s (E2's setup) | 2.1e-5 / 3.5e-4 / 1.2e-3 (median 3.5e-4) | -1.2e-4 / +1e-5 / -8.7e-5 | 68-101 s |
+| C2: lns16 x 45 s + cutoff after 60 s | 1.0e-3 / 1.1e-3 / 1.2e-3 | +8e-5 to +4.8e-4 | 103-118 s |
+
+* E2's 2.5e-5 is the lucky end of C1's range. C1 needs both a better-than-CPO schedule (long LNS) **and** enough tree time. Seed 2 found the better schedule but its last leaves launched with 6-18 s left and ran 0 nodes: with 16 of 20 workers on LNS, the tree ran out of time.
+* C2 is consistently about 3x worse than C1's median: 45 s of LNS rarely finds the better schedule. Dropped.
+
+### E11: strong branching in the LP ramp-up (serial)
+
+* `sb_candidates=k`: solve both child LPs of the top k candidates and split on the best product of bound gains (the gap anatomy study's top-ranked experiment).
+* **Result** (60-leaf ramp-up, best-known incumbent as cutoff): the worst open leaf closes **99.7%** of the root gap with k = 8, against 74.7% for the default rule. Ramp-up time goes from 22 s to 217 s: a child LP needs about 1,300 dual simplex iterations (about 120 ms) even when warm-started, because one split moves a large project.
+* **Verdict**: the bound effect is large, but it needs the child LPs run in parallel on the pool (next experiment). It stays off by default.
+* **Bug found**: the cached node-LP solver had a 60 s time limit, which HiGHS counts over the solver's whole life. After 60 s of LP work every node returned "time limit", and `_lp_node` read that as infeasible (pruned). Default CPO runs never reached it (ramp-up about 21 s, no re-splits), so no reported result changes. The fix: no time limit; only proven infeasibility prunes; any other status triggers a cold retry, then an error. Covered by a regression test.

@@ -156,3 +156,37 @@ def test_live_leaf_bounds_and_late_cutoff_stay_exact(tmp_path):
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
     assert r.dual_bound <= bf + 1e-6
     assert any("leaf census" in line for line in r.log)
+
+
+def test_strong_branching_ramp_up_and_resplit_match_brute_force(tmp_path):
+    raw = S.tiny(6, 9, 100, 11, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=6, slice_seconds=0.3, quick_seconds=0,
+                     sb_candidates=5)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_strong_branching_picks_a_split_that_moves_both_children(instances):
+    from capopt.parallel import _branch, _lp_node
+    model = last_year_model(instances["P100_growth_penalised"], 18, "step", "cumulative")
+    root = _lp_node(model, [])
+    kids = _branch(model, root, sb_candidates=8)
+    default = _branch(model, root)
+
+    def product(ks):
+        return float(np.prod([np.inf if k is None else max(1e-6, k.bound - root.bound) for k in ks]))
+    assert product(kids) >= product(default) * (1 - 1e-9)
+
+
+def test_node_lp_never_prunes_on_a_time_limit(instances, monkeypatch):
+    """Regression: the cached node-LP solver had a 60 s lifetime time limit; after it, every node read as infeasible."""
+    from capopt import parallel as P
+    model = last_year_model(instances["P100_growth_penalised"], 18, "step", "cumulative")
+    P._LP_CACHE.clear()
+    root = P._lp_node(model, [])
+    h = P._lp_solver(model)
+    h.setOptionValue("time_limit", 0.0)  # simulate the exhausted lifetime limit
+    again = P._lp_node(model, [])
+    assert again is not None and again.bound == pytest.approx(root.bound, rel=1e-9)
+    P._LP_CACHE.clear()

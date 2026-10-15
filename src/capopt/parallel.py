@@ -97,11 +97,12 @@ def _lp_solver(model: Model) -> highspy.Highs:
     """One LP-relaxation HiGHS instance per model, reused across tree nodes: a node only changes column bounds, so
     dual simplex warm-starts from the previous basis instead of rebuilding the model and solving it cold. On the
     233-project CPO models this took the 60-leaf ramp-up from ~40 s to a few seconds. Rebuilt when the model gains
-    rows (root cuts)."""
+    rows (root cuts). No time limit: HiGHS counts `time_limit` over the object's whole life, so a 60 s cap made every
+    node LP after the first minute of tree work return "time limit", which used to read as infeasible (pruned)."""
     key = id(model)
     cached = _LP_CACHE.get(key)
     if cached is None or cached[1] != len(model.builder.row_lo):
-        h = _highs(model, [], True, 60.0)
+        h = _highs(model, [], True, np.inf)
         _LP_CACHE[key] = (h, len(model.builder.row_lo))
         cached = _LP_CACHE[key]
     return cached[0]
@@ -118,15 +119,26 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
         h.changeColsBounds(len(cols), idx, np.array(lbs), np.array(ubs))
     try:
         h.run()
-        ok = h.getModelStatus() == highspy.HighsModelStatus.kOptimal
-        x = np.asarray(h.getSolution().col_value) if ok else None
-        obj = h.getInfo().objective_function_value if ok else None
+        status = h.getModelStatus()
+        if status not in (highspy.HighsModelStatus.kOptimal, highspy.HighsModelStatus.kInfeasible):
+            # never prune on anything but proven infeasibility: retry once from a cold, fresh solver
+            cold = _highs(model, splits, True, np.inf)
+            cold.run()
+            status = cold.getModelStatus()
+            if status not in (highspy.HighsModelStatus.kOptimal, highspy.HighsModelStatus.kInfeasible):
+                raise RuntimeError(f"node LP ended with status {cold.modelStatusToString(status)}")
+            h_used = cold
+        else:
+            h_used = h
+        ok = status == highspy.HighsModelStatus.kOptimal
+        x = np.asarray(h_used.getSolution().col_value) if ok else None
+        obj = h_used.getInfo().objective_function_value if ok else None
     finally:  # restore the model's own bounds for the next node
         if cols:
             h.changeColsBounds(len(cols), idx, np.array([model.builder.lb[c] for c in cols]),
                                np.array([model.builder.ub[c] for c in cols]))
     if not ok:
-        return None
+        return None  # proven infeasible
     cand = []
     inst = model.inst
     for p, (opts, cols) in enumerate(zip(model.options, model.start_cols)):
@@ -139,10 +151,31 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(model.user(obj), splits, cand[:8])
+    return Node(model.user(obj), splits, cand[:32])
 
 
-def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[Node], int]:
+def _branch(model: Model, node: Node, sb_candidates: int = 0) -> tuple[Node | None, Node | None]:
+    """The two children of `node`. Default: split on the top-scored fractional candidate (fractionality x spend).
+    E11 (sb_candidates=k): strong branching. Solve both child LPs of the top k candidates and keep the split with
+    the best product of bound gains (an infeasible child scores infinite: that split is a fixing). The gap anatomy study
+    measured 219 LP nodes to a 1e-4 gap this way, against 849 with the default rule."""
+    if sb_candidates <= 1:
+        _, p, s = node.frac[0]
+        return _lp_node(model, node.splits + [(p, s, 0)]), _lp_node(model, node.splits + [(p, s, 1)])
+    eps = 1e-6 + 1e-12 * abs(node.bound)
+    best, best_score = None, -1.0
+    for _, p, s in node.frac[:sb_candidates]:
+        kids = (_lp_node(model, node.splits + [(p, s, 0)]), _lp_node(model, node.splits + [(p, s, 1)]))
+        gains = [np.inf if c is None else max(eps, c.bound - node.bound) for c in kids]
+        score = gains[0] * gains[1]
+        if score > best_score:
+            best, best_score = kids, score
+        if score == np.inf:
+            break
+    return best
+
+
+def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0) -> tuple[list[Node], int]:
     """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned)."""
     root = _lp_node(model, [])
     if root is None:
@@ -158,9 +191,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
         if not node.frac:  # LP integral: nothing to split on; keep as a leaf
             done.append(node)
             continue
-        _, p, s = node.frac[0]
-        for side in (0, 1):
-            child = _lp_node(model, node.splits + [(p, s, side)])
+        for child in _branch(model, node, sb_candidates):
             if child is None or child.bound >= cutoff:
                 pruned += 1
                 continue
@@ -344,7 +375,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
-                   cutoff_after: float | None = None) -> ParallelResult:
+                   cutoff_after: float | None = None, sb_candidates: int = 0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -362,6 +393,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     E1: each running leaf has a slot in a shared array where its worker writes its live dual bound, so the global bound
         (and the streamed gap) is exact rather than frozen at launch values; re-split children inherit the parent's
         bound; the log ends with a census of the leaves whose bounds were worst.
+    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off).
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
         callback either way; exp05 found the static bound can steer HiGHS' search badly.
 
@@ -428,7 +460,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             bounds, cuts = root_loop(model, cut_rounds)
             cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
-        leaves, pruned = ramp_up(model, n_leaves, best_val.value)
+        leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         wait(warm)
         seq = 0
@@ -488,10 +520,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     nxt = sl * slice_growth
                     if not node.frac:  # LP integral yet the MIP is open: let it run to the end
                         heapq.heappush(heap, (max(b, r["bound"]), seq, splits, None)); seq += 1; continue
-                    _, p, s = node.frac[0]
                     resplits += 1
-                    for side in (0, 1):
-                        child = _lp_node(model, splits + [(p, s, side)])
+                    for child in _branch(model, node, sb_candidates):
                         if child is not None:  # E1: a child keeps at least its parent's proven bound
                             heapq.heappush(heap, (max(child.bound, r["bound"]), seq, child.splits, nxt)); seq += 1
                 else:
