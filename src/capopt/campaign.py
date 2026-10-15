@@ -274,7 +274,8 @@ class Progress:
             self.data["runs"][k].update(status="running", started_at=t)
             r = self.data["runs"][k]
             self.data["current"] = {"index": k, "config": r.get("config"), "instance": r.get("instance"),
-                                    "seed": r.get("seed", 0), "started_at": t}
+                                    "seed": r.get("seed", 0), "started_at": t,
+                                    "time_limit": float(r.get("time_limit", self.data["time_limit"]))}
             self.data["last_heartbeat"] = t
         self.flush()
 
@@ -318,7 +319,7 @@ def run(spec: dict, cdir: Path, heartbeat_s: float = HEARTBEAT_S, out_dir: Path 
         for k, item in enumerate(spec["runs"]):
             prog.start_run(k)
             try:
-                outcome = runner(item, float(spec["time_limit"]), out)
+                outcome = runner(item, float(item.get("time_limit", spec["time_limit"])), out)  # per-run override
             except Exception as exc:  # noqa: BLE001 - record and continue with the next run
                 outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
             prog.end_run(k, outcome)
@@ -396,8 +397,9 @@ def status(cdir: Path, now: float | None = None, stale_s: float = STALE_S, not_s
     if not alive(prog.get("pid")):
         reasons.append(f"runner process {prog.get('pid')} is not running")
     cur = prog.get("current")
-    if cur and now - cur["started_at"] > prog["time_limit"] + overdue_grace_s:
-        reasons.append(f"current run has taken {now - cur['started_at']:.0f}s, past its {prog['time_limit']:.0f}s "
+    limit = float(cur.get("time_limit", prog["time_limit"])) if cur else prog["time_limit"]
+    if cur and now - cur["started_at"] > limit + overdue_grace_s:
+        reasons.append(f"current run has taken {now - cur['started_at']:.0f}s, past its {limit:.0f}s "
                        f"limit + {overdue_grace_s:.0f}s grace")
     if reasons:
         return dict(out, state="STALLED", reason="; ".join(reasons))

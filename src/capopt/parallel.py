@@ -332,13 +332,15 @@ def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
 
 
 def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big: bool = False,
-              patience: float | None = None) -> dict:
+              patience: float | None = None, alns: bool = False) -> dict:
     """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
     rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes.
     big (E13): add a big-project neighbourhood. Free 1-3 of the largest projects (top 10% by spend) plus a random
     set of others, with a 3x longer sub-MIP limit. The gap anatomy study found the optimum moves a few big, long
     projects by 1-19 years, which the window and hot-spot neighbourhoods rarely allow.
-    patience (E18): return to the tree once the shared incumbent has not improved for this many seconds."""
+    patience (E18): return to the tree once the shared incumbent has not improved for this many seconds.
+    alns (E20): pick neighbourhood kinds by adaptive weights (a win scores 10, an exhausted neighbourhood 1, a timeout
+    0; weights move 20% toward the latest score, floor 0.2) instead of uniformly. Per-kind stats are returned either way."""
     _load_cuts()
     model: Model = _W["model"]
     inst = model.inst
@@ -348,6 +350,9 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
     found, tries, wins = [], 0, 0
     big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
     base_kinds = 4 if inst.penalised else 3
+    n_kinds = base_kinds + (1 if big else 0)
+    weights = np.ones(n_kinds)
+    k_tries, k_wins, k_secs = np.zeros(n_kinds, int), np.zeros(n_kinds, int), np.zeros(n_kinds)
     last_val, last_t = _W["best_val"].value, time.time()
     while time.time() < deadline and not _W["stop"].value:
         if _W["best_val"].value < last_val:
@@ -360,7 +365,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
         with _W["lock"]:
             cur = np.array(_W["best_starts"][:], dtype=np.int64)
             cur_val = _W["best_val"].value
-        kind = int(rng.integers(base_kinds + (1 if big else 0)))
+        kind = int(rng.choice(n_kinds, p=weights / weights.sum())) if alns else int(rng.integers(n_kinds))
         limit = sub_limit
         if kind == base_kinds:  # E13: big projects plus a random set of others
             free = np.zeros(inst.n, dtype=bool)
@@ -399,9 +404,11 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             continue
         h.setOptionValue("objective_bound", model.solver_units(float(cur_val)))
         h.setSolution(_vec_solution(model, cur))
+        ts = time.time()
         h.run()
         status = h.modelStatusToString(h.getModelStatus())
         sol = h.getSolution()
+        won = False
         if sol.value_valid:
             st = model.starts_from_solution(np.asarray(sol.col_value))
             obj = objective(inst, st)
@@ -409,8 +416,15 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
                 _offer(st, obj)
                 found.append((time.time() - t0, obj))
                 wins += 1
+                won = True
+        k_tries[kind] += 1
+        k_wins[kind] += won
+        k_secs[kind] += time.time() - ts
+        score = 10.0 if won else (1.0 if status == "Optimal" else 0.0)
+        weights[kind] = max(0.2, 0.8 * weights[kind] + 0.2 * score)
         size = min(45, size + 2) if status == "Optimal" else max(12, size - 3)
-    return {"tries": tries, "wins": wins, "found": found}
+    return {"tries": tries, "wins": wins, "found": found,
+            "kinds": [(int(a), int(b), float(c)) for a, b, c in zip(k_tries, k_wins, k_secs)]}
 
 
 def _vec_solution(model: Model, starts: np.ndarray) -> highspy.HighsSolution:
@@ -443,7 +457,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
                    cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False,
-                   lns_after_rampup: bool = False, lns_patience: float | None = None) -> ParallelResult:
+                   lns_after_rampup: bool = False, lns_patience: float | None = None,
+                   lns_alns: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -465,6 +480,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_after_rampup (E15): submit the LNS workers only after the ramp-up, so strong branching has the whole pool (useful
         with a good warm start, when early LNS matters less).
     lns_patience (E18): an LNS worker joins the tree once the incumbent has not improved for this many seconds.
+    lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
@@ -485,7 +501,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     stop = ctx.Value("b", 0, lock=False)
     live = ctx.Array("d", [-np.inf] * workers, lock=False)  # E1: live dual bound per worker slot
     free_slots = list(range(workers))
-    census: list[tuple[float, float, int, str, int]] = []  # (final bound, seconds, nodes, status, split count)
+    census: list[tuple[float, float, int, str, int]] = []
+    lns_kinds: list[list] = []  # (final bound, seconds, nodes, status, split count)
     trace: list[tuple[float, float]] = []
     if incumbent is not None:
         v = objective(inst, incumbent)
@@ -528,7 +545,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
         def start_lns() -> list:
-            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience)
+            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns)
                     for i in range(lns_workers)]
         lns = [] if lns_after_rampup else start_lns()
         if cut_rounds:
@@ -557,6 +574,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 lns.remove(f)
                 trace.extend(f.result()["found"])
                 log.append(f"lns: {f.result()['tries']} sub-MIPs, {f.result()['wins']} improvements")
+                lns_kinds.append(f.result().get("kinds", []))
             while heap and len(running) < workers - len(lns):
                 b, k, splits, sl = heapq.heappop(heap)
                 if b >= tol():
@@ -612,6 +630,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             r = f.result()
             trace.extend(r["found"])
             log.append(f"lns: {r['tries']} sub-MIPs, {r['wins']} improvements")
+            lns_kinds.append(r.get("kinds", []))
+        if lns_kinds and any(lns_kinds):  # E20: which neighbourhood kinds won
+            tot = np.sum([np.array(k, dtype=float) for k in lns_kinds if k], axis=0)
+            log.append("lns kinds (tries/wins/s): " + "; ".join(
+                f"k{i} {int(a)}/{int(b)}/{c:.0f}" for i, (a, b, c) in enumerate(tot)))
         if best_val.value < last_seen:
             trace.append((time.time() - t0, best_val.value))
         if census:  # E1: which leaves held the bound (lowest final bounds first)

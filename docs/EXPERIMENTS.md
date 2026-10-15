@@ -242,3 +242,16 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 
 * **Result**: 253.5 s (seed 0); seed 1 not proven by 300 s. The tree's leaves improve the schedule only slowly (final schedules -1.224e-4 / -1.211e-4, found at 253 s / 148 s).
 * **Verdict**: LNS earns its workers on the primal side. The best warm-start setup so far is E15A/E18: about 110-120 s when LNS finds a near-optimal schedule by about 90 s, about 265 s otherwise. COPT's logged time is 56 s; proving from the best-known schedule takes capopt 54-60 s (E17), so the remaining gap is finding that schedule sooner.
+
+### E20: adaptive LNS neighbourhood selection (ALNS; now the default)
+
+* Each LNS worker picks neighbourhood kinds by adaptive weights. A win scores 10, an exhausted neighbourhood 1 and a timeout 0; a weight moves 20% toward each new score, with a floor of 0.2. The master logs tries / wins / sub-MIP seconds per kind.
+* **Result** (warm start from the CPO schedule; 16 LNS workers after the ramp-up, cutoff after 60 s, k = 4, big-project LNS, patience 15 s; 3 seeds each):
+
+| | Proof of 1e-5, seeds 0 / 1 / 2 | Median |
+|---|---|---|
+| E18 (uniform kinds) | 110.9 / 264.9 / 133.7 s | 134 s |
+| **E20 (ALNS)** | **83.0 / 139.5 / 97.3 s** | **97 s** |
+
+* Per-kind yield (wins per sub-MIP minute, pooled): start-time windows are the most productive by about 2x; random subsets, active-year windows and big-project moves come next; cash hot spots are the weakest.
+* **Verdict**: a 28% lower median and a halved worst case. ALNS becomes the default (`lns_alns=True`). Against COPT's logged 56 s this setup is at 1.5-2.5x, from 2.3-4.7x before.
