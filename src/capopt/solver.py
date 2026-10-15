@@ -56,7 +56,7 @@ def lp_bound(inst: I.Instance, L: int) -> float:
 def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = 60,
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
           lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
-          leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0) -> Result:
+          leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0, cutoff_after: float | None = None) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen."""
     t0 = time.time()
@@ -84,7 +84,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit - (time.time() - t0),
                            incumbent=best_starts, t0=t0, idle=idle, slice_seconds=slice_seconds,
                            lns_workers=lns_workers, lns_seconds=lns_seconds, cut_rounds=cut_rounds,
-                           quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed)
+                           quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed,
+                           cutoff_after=cutoff_after)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

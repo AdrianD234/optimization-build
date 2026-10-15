@@ -173,10 +173,10 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
 _W: dict = {}
 
 
-def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9):
+def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9, live=None):
     model = last_year_model(I.load(name), L, encoding, balance)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
-              cuts_loaded=False, rel_gap=rel_gap)
+              cuts_loaded=False, rel_gap=rel_gap, live=live)
 
 
 def _load_cuts() -> None:
@@ -197,7 +197,8 @@ def _offer(starts: np.ndarray, obj: float) -> None:
             _W["best_starts"][:] = [int(s) for s in starts]
 
 
-def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, leaf_cutoff: bool = True) -> dict:
+def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, leaf_cutoff: bool = True,
+                slot: int = -1, start_bound: float = -np.inf) -> dict:
     _load_cuts()
     model: Model = _W["model"]
     h = _highs(model, splits, False, time_limit, seed, _W["rel_gap"])
@@ -213,8 +214,15 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
         found.append((time.time() - t0, obj))
         _offer(st, obj)
 
+    live = _W.get("live")
+    if live is not None and slot >= 0:
+        live[slot] = start_bound
+
     def on_interrupt(e):
-        if model.user(e.data_out.mip_dual_bound) >= _W["best_val"].value - _W["rel_gap"] * abs(_W["best_val"].value):
+        db = model.user(e.data_out.mip_dual_bound)
+        if live is not None and slot >= 0 and db > live[slot]:
+            live[slot] = db  # E1: the master reads this live bound for the global gap and the leaf census
+        if db >= _W["best_val"].value - _W["rel_gap"] * abs(_W["best_val"].value):
             e.data_in.user_interrupt = True
 
     h.cbMipImprovingSolution.subscribe(on_improve)
@@ -230,6 +238,7 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
     elif status == "Optimal":
         obj = model.user(info.objective_function_value)
         bound = max(bound, obj) if obj < np.inf else bound
+    bound = max(bound, start_bound)  # a subtree's bound never falls below the bound it started with
     return {"status": status, "bound": float(bound), "found": found, "nodes": int(info.mip_node_count)}
 
 
@@ -334,7 +343,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
-                   leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0) -> ParallelResult:
+                   leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
+                   cutoff_after: float | None = None) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -347,6 +357,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     quick_seconds: while the worker pool spawns, the master tries to solve the whole model directly for this long, so
         an easy instance is finished before the parallel machinery is even up.
     The pool starts spawning first; the quick try, the cut loop and the ramp-up all overlap process start-up.
+    cutoff_after (E2): leaves launched this many seconds after the start get the shared incumbent as HiGHS'
+        objective_bound even when leaf_cutoff is False (search without a cutoff early, prove with one late).
+    E1: each running leaf has a slot in a shared array where its worker writes its live dual bound, so the global bound
+        (and the streamed gap) is exact rather than frozen at launch values; re-split children inherit the parent's
+        bound; the log ends with a census of the leaves whose bounds were worst.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
         callback either way; exp05 found the static bound can steer HiGHS' search badly.
 
@@ -363,6 +378,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     best_val = ctx.Value("d", np.inf, lock=False)
     best_starts = ctx.Array("q", inst.n, lock=False)
     stop = ctx.Value("b", 0, lock=False)
+    live = ctx.Array("d", [-np.inf] * workers, lock=False)  # E1: live dual bound per worker slot
+    free_slots = list(range(workers))
+    census: list[tuple[float, float, int, str, int]] = []  # (final bound, seconds, nodes, status, split count)
     trace: list[tuple[float, float]] = []
     if incumbent is not None:
         v = objective(inst, incumbent)
@@ -385,7 +403,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     cuts_path.unlink()  # workers read it only after the master has written it
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
-                                         str(cuts_path) if cut_rounds else None, rel_gap))
+                                         str(cuts_path) if cut_rounds else None, rel_gap, live))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:
@@ -434,8 +452,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 if remaining <= 0:
                     closed.append(b); continue
                 tl = min(remaining, sl) if sl else remaining
-                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k + 7919 * seed, t0, leaf_cutoff)
-                running[fut] = (b, splits, sl, sl is not None and tl < remaining)
+                slot = free_slots.pop() if free_slots else -1
+                cut = leaf_cutoff or (cutoff_after is not None and time.time() - t0 >= cutoff_after)
+                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k + 7919 * seed, t0, cut, slot, b)
+                running[fut] = (b, splits, sl, sl is not None and tl < remaining, slot, time.time())
             done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
             done = {f for f in done if f in running}
             min_closed = min(closed) if closed else np.inf
@@ -446,15 +466,20 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 trace.append((time.time() - t0, last_seen))
                 sink(trace[-1][0], last_seen, best_starts[:])
             # proven bound now: finished subtrees, queued subtrees (LP bounds), running subtrees (their start bounds)
-            bound_now = min([min_closed] + [hb[0] for hb in heap[:1]] + [rv[0] for rv in running.values()]
+            bound_now = min([min_closed] + [hb[0] for hb in heap[:1]]
+                            + [max(rv[0], live[rv[4]]) if rv[4] >= 0 else rv[0] for rv in running.values()]
                             + [best_val.value])
             if bound_now > last_bound + 1e-12 * abs(bound_now):
                 last_bound = bound_now
                 bound_trace.append((time.time() - t0, bound_now))
                 sink_bound(bound_trace[-1][0], bound_now)
             for fut in done:
-                b, splits, sl, sliced = running.pop(fut)
+                b, splits, sl, sliced, slot, started = running.pop(fut)
+                if slot >= 0:
+                    live[slot] = -np.inf
+                    free_slots.append(slot)
                 r = fut.result()
+                census.append((r["bound"], time.time() - started, r.get("nodes", 0), r["status"], len(splits)))
                 trace.extend(r["found"])
                 if r["status"] == "Time limit reached" and sliced:
                     node = _lp_node(model, splits)
@@ -467,8 +492,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     resplits += 1
                     for side in (0, 1):
                         child = _lp_node(model, splits + [(p, s, side)])
-                        if child is not None:
-                            heapq.heappush(heap, (child.bound, seq, child.splits, nxt)); seq += 1
+                        if child is not None:  # E1: a child keeps at least its parent's proven bound
+                            heapq.heappush(heap, (max(child.bound, r["bound"]), seq, child.splits, nxt)); seq += 1
                 else:
                     closed.append(r["bound"])
         stop.value = 1
@@ -478,6 +503,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"lns: {r['tries']} sub-MIPs, {r['wins']} improvements")
         if best_val.value < last_seen:
             trace.append((time.time() - t0, best_val.value))
+        if census:  # E1: which leaves held the bound (lowest final bounds first)
+            worst = sorted(census)[:5]
+            log.append("leaf census (worst bounds): " + "; ".join(
+                f"bound {bd:.6e} after {sec:.0f}s, {nd} nodes, {st}, depth {dp}" for bd, sec, nd, st, dp in worst))
         return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
     finally:
         stop.value = 1

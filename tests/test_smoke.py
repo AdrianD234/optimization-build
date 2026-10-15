@@ -145,3 +145,14 @@ def test_hard_cash_cap_matches_brute_force(tmp_path, cfg):
         ev = evaluate(inst, inst.starts_from_dict(r.starts))
         last = ev["last_build_year_index"]
         assert ev["feasible"] and max(ev["closing_balance_units"][:last], default=0) <= cap + 1e-6
+
+
+def test_live_leaf_bounds_and_late_cutoff_stay_exact(tmp_path):
+    """E1/E2: live leaf bounds, the leaf census, and the late cutoff must not change the proven optimum."""
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=6, quick_seconds=0, cutoff_after=0.0)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    assert r.dual_bound <= bf + 1e-6
+    assert any("leaf census" in line for line in r.log)
