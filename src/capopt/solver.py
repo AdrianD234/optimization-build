@@ -57,9 +57,12 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
           lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
           leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0, cutoff_after: float | None = None,
-          sb_candidates: int = 0, lns_big: bool = False) -> Result:
+          sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
-    See docs/EXPERIMENTS.md for why each default was chosen."""
+    See docs/EXPERIMENTS.md for why each default was chosen.
+    lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
+    warm_start: path to a solution JSON with "starts" (e.g. a previous plan); used as the first incumbent if feasible.
+    The time counted includes loading it."""
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -80,6 +83,17 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             lp[L] = lp_bound(inst, L)
 
     best_obj, best_starts, dual, trace = np.inf, None, np.inf, []
+    if warm_start is not None:
+        import json
+        from pathlib import Path
+        st = inst.starts_from_dict(json.loads(Path(warm_start).read_text(encoding="utf-8"))["starts"])
+        ev = evaluate(inst, st)
+        if ev["feasible"]:
+            best_obj, best_starts = float(ev["objective"]), st
+            trace.append((time.time() - t0, best_obj))
+            log.append(f"warm start: objective {best_obj:.6f}")
+        else:
+            log.append("warm start: infeasible for this instance, ignored")
     proven_all = True
     for L in L_order:
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit - (time.time() - t0),

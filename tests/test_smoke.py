@@ -198,3 +198,16 @@ def test_big_project_lns_matches_brute_force(tmp_path):
     bf, _ = S.brute_force(I.from_dict(raw))
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=2, lns_seconds=2, lns_big=True)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_warm_start_from_a_solution_file(tmp_path):
+    import json
+    raw = S.tiny(6, 9, 100, 17, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, bf_starts = S.brute_force(inst)
+    sol = tmp_path / "warm.json"
+    sol.write_text(json.dumps({"starts": inst.starts_to_dict(np.asarray(bf_starts))}), encoding="utf-8")
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, warm_start=str(sol))
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    assert any(line.startswith("warm start: objective") for line in r.log)
