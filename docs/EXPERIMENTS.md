@@ -309,3 +309,15 @@ Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 A
 
 * On the P95 scenarios both L = 42 and L = 43 are hard. They are solved one after the other, so the second never gets enough time.
 * The research report `docs/research/CFADS_BOUND_STALL.md` explains the stall. The CFADS funding stream (0.5-1.64x its mean, binding in 29 of 38 years) spreads the gap over many projects. The default branching rule and 4-candidate strong branching miss the good splits. The product score is inflated by children that overshoot the cutoff. E22 tests the report's top rule.
+
+### E22: strong-branching gains capped at the distance to the cutoff (cfadsds_P95)
+
+* `_sb_pick` caps each child's gain at the cutoff minus the node bound (the research report's rule #1), and the cutoff is passed through the ramp-up and re-split. Setup: KPI pass 3 plus k = 16; 650 s limit; COPT logged 433 s.
+
+| Arm | Ramp-up | L = 43 proven | Whole problem proven |
+|---|---|---|---|
+| KPI pass 3 (k = 4, uncapped) | - | not by 650 s (gap 1.6e-3) | no |
+| **A: k = 16, capped** | 89 s, 16 pruned | 349 s | **593 s** (1.37x COPT) |
+| B: A plus 5 rounds of root cover cuts (103 cuts) | 99 s | 347 s | 586 s |
+
+* **Verdict**: the capped rule turns an unprovable instance into a proof. Root cuts add nothing measurable. E23 makes k automatic, 16 when the root LP has more than 15 fractional projects (cfadsds: 21-22; s2000: 11), else 4, because a 16-candidate ramp-up costs about 90 s that s2000 does not need. The batched ramp-up now expands enough nodes per round to give the pool about twice as many tasks as workers.
