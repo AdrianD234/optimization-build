@@ -197,7 +197,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
     x_cost_years = np.zeros(inst.T)  # per-year cost coefficient on cumulative spend (cumulative form)
     if balance == "recursive":
         for t in range(L + 1):
-            net_cols.append(b.var(inst.backlog_weight if t < L and hold else 0.0, 0.0, float(cumF[t]), name=f"net[{t}]"))
+            ub = float(cumF[t]) if inst.cash_cap is None or t >= L else min(float(cumF[t]), float(inst.cash_cap[t]))
+            net_cols.append(b.var(inst.backlog_weight if t < L and hold else 0.0, 0.0, ub, name=f"net[{t}]"))
         for t in range(L + 1):
             r = b.new_row(F[t], F[t])
             b.add(r, net_cols[t], 1.0)
@@ -206,7 +207,9 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
             bal_rows.append(r)
     else:
         for t in range(L + 1):
-            bal_rows.append(b.new_row(-INF, float(cumF[t])))
+            # cumspend_t <= cumF_t (no debt); with a hard cash cap also cumspend_t >= cumF_t - cap_t before year L
+            lo = -INF if inst.cash_cap is None or t >= L else float(cumF[t] - inst.cash_cap[t])
+            bal_rows.append(b.new_row(lo, float(cumF[t])))
         if hold:
             b.offset += inst.backlog_weight * float(cumF[:L].sum())
             x_cost_years[:L] = -inst.backlog_weight
@@ -304,6 +307,8 @@ def reference_bigm(inst: Instance) -> Model:
             # y[t+1]=1 => net - base - sum band <= 0
             b.row(-INF, float(env[t] * inst.base_frac) + M, [net[t], y[t + 1]] + bands[t], [1.0, M] + [-1.0] * nb)
             b.row(-INF, M, [div[t], y[t + 1]], [1.0, M])                      # y=1 => div <= 0
+            if inst.cash_cap is not None:                                    # y=1 => net <= hard cash cap
+                b.row(-INF, float(inst.cash_cap[t]) + M, [net[t], y[t + 1]], [1.0, M])
             b.row(-M, INF, [backlog[t], net[t], y[t + 1]], [1.0, -1.0, -M])     # y=1 => backlog >= net
             b.row(-INF, M, [backlog[t], net[t], y[t + 1]], [1.0, -1.0, M])      # y=1 => backlog <= net
             b.row(-INF, 0.0, [backlog[t], y[t + 1]], [1.0, -M])                 # y=0 => backlog <= 0

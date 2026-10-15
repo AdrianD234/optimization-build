@@ -29,6 +29,8 @@ class Instance:
     bands: list[tuple[float, float | None, float]]  # (from_frac, to_frac, weight)
     max_starts: int
     raw: dict[str, Any] = field(repr=False)
+    cash_cap: np.ndarray | None = None  # optional hard cap on the closing balance (units) in every year before the
+    #                                     last build year (the final year's balance is released, never capped)
 
     @property
     def n(self) -> int:
@@ -82,6 +84,8 @@ def from_dict(raw: dict[str, Any]) -> Instance:
         bands=[(float(b["from_frac"]), None if b["to_frac"] is None else float(b["to_frac"]), float(b["weight"]))
                for b in raw["tiers"]["bands"]],
         max_starts=int(raw["max_starts_per_year"]),
+        cash_cap=None if raw.get("cash_cap_units") is None else np.broadcast_to(
+            np.asarray(raw["cash_cap_units"], dtype=np.float64), (int(raw["T"]),)).copy(),
         raw=raw,
     )
 

@@ -32,6 +32,20 @@ Caveats that favour COPT, kept visible in every report:
 - **Back off:** two consecutive failed variants within a theme park that theme, with a recorded reason. Reopen it only with new evidence, such as a diagnostic showing that bottleneck has returned.
 - **Diagnose before guessing:** if a result surprises us, add instrumentation first (dual-bound trace, time spent per phase, leaf statistics), then form the next hypothesis.
 
+### Noise threshold (calibrated once, 2026-10-15)
+
+The parallel solver is not deterministic on the CPO data: workers share incumbents at timing-dependent moments. A one-off calibration (s2000_P50high, 5 seeds × 90 s, 16 LNS workers) measured the run-to-run spread with nothing changed:
+
+| Config | Time to 1% | Incumbent vs CPO at 30 s | at 90 s |
+|---|---|---|---|
+| 60 leaves | median 36 s, range 11.5-78.7 s (7x) | +2.1% (+0.33..+3.3%) | +0.098% (+0.064..+0.20%) |
+| 24 leaves | median 20.6 s, range 14.3-22.7 s | +0.35% (+0.19..+0.64%) | +0.147% (+0.072..+0.34%) |
+
+Rules that follow:
+- **Screen early-phase ideas against the 24-leaf configuration.** Its tight band makes a 1-seed result readable.
+- **Better** only if outside the band on the good side: time to 1% under about 14 s, or the 90 s incumbent under about +0.07%. **Worse** only if outside on the bad side. **Inside the band: neutral**, move on.
+- **1 seed per screen; 2 only when borderline.** Recalibrate only after a change to the search strategy that could change the noise itself.
+
 ### Guardrails (every iteration)
 
 - `pytest` and `pytest -m slow` green; every schedule re-scored by the referee or evaluator. An incorrect fast solver is worthless.
@@ -51,8 +65,8 @@ Caveats that favour COPT, kept visible in every report:
 | H7 | **Branching priority**: split first on high-spend or long projects and on the binding 2026 start cap | The 100-starts cap binds in 2026 on the envelope scenarios | Better-balanced leaves | queued |
 | H8 | **HiGHS option tuning** per leaf (heuristic effort, feasibility jump, RINS) on the screening set | Defaults are tuned for MIPLIB, not for this structure | Modest, cheap to test | queued |
 | H9 | **Evolve-a-heuristic loop** (FunSearch/AlphaEvolve pattern, `docs/research/AI_MATH_RESULTS.md`) on the warm-start rule and the LNS neighbourhoods | Once H2 exists, its rule is a natural target | Long-term | later |
-| H10 | **Native start-year local search** (numba): shift / swap / ejection-chain moves, exact O(T) incremental cost with bands, Feasibility-Jump/Local-MIP-style adaptive cash-row weights, lift moves; 1-16 seeded copies. Refines H2 | Generic one-flip searches fight the one-start-per-project GUB; the 0.8% cash slack needs weighted crossing of infeasible states (`research/HYBRID_AND_CROSSFIELD.md` §2.8) | Time to 1% / 0.1% in seconds; screen standalone at 2/5/10/30/60 s first | proposed |
-| H11 | **LP-ordered list scheduling + dual-guided cash repair** (mining TopoSort, Lagrangian / α-point orderings, Chu-Beasley pseudo-utility repair) as the construction step of H2 | LP rounding is cash-infeasible; this is how mine planning and NPV scheduling get from LP to near-optimal (§2.1-2.3, 2.7) | Thousands of diverse cash-feasible seeds per second; first good incumbent < 1 s (today about 40 s) | proposed |
+| H10 | **[PARKED 2026-10-15]** **Native start-year local search** (numba): shift / swap / ejection-chain moves, exact O(T) incremental cost with bands, Feasibility-Jump/Local-MIP-style adaptive cash-row weights, lift moves; 1-16 seeded copies. Refines H2 | Generic one-flip searches fight the one-start-per-project GUB; the 0.8% cash slack needs weighted crossing of infeasible states (`research/HYBRID_AND_CROSSFIELD.md` §2.8) | Time to 1% / 0.1% in seconds; screen standalone at 2/5/10/30/60 s first | proposed |
+| H11 | **[PARKED 2026-10-15]** **LP-ordered list scheduling + dual-guided cash repair** (mining TopoSort, Lagrangian / α-point orderings, Chu-Beasley pseudo-utility repair) as the construction step of H2 | LP rounding is cash-infeasible; this is how mine planning and NPV scheduling get from LP to near-optimal (§2.1-2.3, 2.7) | Thousands of diverse cash-feasible seeds per second; first good incumbent < 1 s (today about 40 s) | proposed |
 | H12 | **Structure-aware parallel ALNS**: UCB bandit over cash-crunch, year-0/1 cap swap, overlapping time windows, pool crossover, local branching, proximity; SCIP fixing-rate / node-limit rules; SA acceptance; late-phase polishing | Near-optima differ in 128/233 projects, so random 25-project neighbourhoods can't bridge them; ParBalans: diverse single-thread workers beat one big solve (§2.9-2.10) | 0.07% at 200 s → < 0.01% within 60 s | proposed |
 | H13 | **Kernel search (MMKP variant)**: kernel = LP support ∪ incumbent ± 2 years; reduced-cost buckets; 2-3 s restricted sub-MIPs with cutoff | The model is a multiple-choice multidimensional knapsack, kernel search's home ground; reuses the sub-MIP code (§2.6) | < 0.1% in about 30 s on one worker | proposed |
 | H14 | **Scenario-family donor warm start**: seed from the nearest solved GPS27 sibling (same cost family and benefit, donor funding ≤ recipient), repair + polish | The CPO campaign's own "keep" verdict; COPT's logged times were warm-started too (§2.13) | Within 0.1% before the pool spawns on batch runs; report donor use explicitly | proposed |
@@ -60,3 +74,5 @@ Caveats that favour COPT, kept visible in every report:
 | H16 | **Year-block Dantzig-Wolfe bound probe** (Caprara-Furini-Malaguti) on the screening scenarios | The only decomposition above the LP bound: Lagrangian, BZ and per-project DW all equal it here (§2.3-2.4) | A yes/no on a dual-side research direction | proposed (later) |
 
 Research notes for this backlog: [research/HYBRID_AND_CROSSFIELD.md](research/HYBRID_AND_CROSSFIELD.md) (MindOpt↔HiGHS exchange, the MindOpt benchmark protocol, cross-field techniques). Its root-LP diagnostic finds reduced-cost fixing removes only about 1.5% of columns at the root gap, so H6 should target sub-MIPs and nodes rather than the root. If H2 is picked, build it as H11 (construction) + H10 (improvement).
+
+**Parked: the native local-search theme (H2 via H10 + H11).** Two variants failed stage (a) on all 3 screening scenarios: the greedy cash-safe construction, and alpha-point construction with cash repair followed by adaptive-weight local search. The local search ran at 6-8M moves/s but stalled within 2 s at +4% to +21% from the CPO objective; single-thread LNS reaches +0.88% in 90 s. Reason: on this data any one- or two-project move shifts spend between years and breaks the cumulative cash balance or lands in the steep tiers. Good moves need several projects to move together, which sub-MIP neighbourhoods (LNS, H12, H13) do and move-based searches don't. Reopen only with compound, cash-balanced moves (e.g. ejection chains that keep every year's cumulative balance), or as a polisher inside a sub-MIP framework.

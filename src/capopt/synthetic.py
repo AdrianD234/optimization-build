@@ -58,6 +58,7 @@ def perturb(name: str, seed: int, spend_noise: float = 0.1, pv_noise: float = 0.
 
 def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     """Exact optimum by enumeration (tiny instances only)."""
+    from .evaluate import objective
     from .heuristics import kernel as K
     pk = K.pack(inst)
     sizes = [len(a) for a in inst.allowed]
@@ -68,7 +69,8 @@ def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
         st = np.array([inst.allowed[p][j] for p, j in enumerate(idx)], dtype=np.int64)
         if np.bincount(st, minlength=inst.T).max() > inst.max_starts:
             continue
-        v = K.cost(pk, st, inst.penalised)
+        # the compiled kernel knows no hard cash cap; capped instances use the exact evaluator instead
+        v = K.cost(pk, st, inst.penalised) if inst.cash_cap is None else objective(inst, st)
         if v < best:
             best, arg = v, st
     return best, arg

@@ -137,9 +137,10 @@ def _reference_module():
 
 
 def solve_cold(name: str, time_limit: float, log_dir: Path, lock_timeout: float | None = None,
-               licence_attempts: int = 8) -> dict[str, Any]:
-    """One cold MindOpt solve of the pack's reference model, under the lock and a confirmed licence. Returns
-    {"skipped": reason} when MindOpt cannot run here."""
+               licence_attempts: int = 8, rel_gap: float = 0.0) -> dict[str, Any]:
+    """One cold MindOpt solve of the pack's reference model (instance name or JSON path), under the lock and a
+    confirmed licence, stopping at relative gap `rel_gap` (the pack's reference code uses 0; COPT's CPO runs used
+    1e-5). Returns {"skipped": reason} when MindOpt cannot run here."""
     if not available():
         return {"skipped": "mindoptpy is not installed"}
     try:
@@ -149,12 +150,27 @@ def solve_cold(name: str, time_limit: float, log_dir: Path, lock_timeout: float 
             model = mm.build(I.load(name).raw)
             build_s = time.perf_counter() - t0
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / f"{name}_mindopt_cold.log"
+            log_path = log_dir / f"{Path(str(name)).stem}_mindopt_cold.log"
             log_path.unlink(missing_ok=True)
+            m = model["m"]
             try:
-                res = mm.solve(model, time_limit, str(log_path))  # MindOpt stops itself at MaxTime; never killed
+                m.setParam("MaxTime", float(time_limit))  # MindOpt stops itself at MaxTime; never killed
+                m.setParam("MIP/GapRel", float(rel_gap))
+                m.setParam("MIP/GapAbs", 0.0)
+                t1 = time.perf_counter()
+                with mm.CaptureStdout(str(log_path)):
+                    m.optimize()
+                secs = time.perf_counter() - t1
+                status = str(m.Status)
+                res = {"status": {"1": "OPTIMAL", "7": "TIME LIMIT"}.get(status, status), "seconds": round(secs, 2),
+                       "has_solution": bool(getattr(m, "HasSolution", 0)), "rel_gap_target": rel_gap}
+                if res["has_solution"]:
+                    res["objective"] = float(m.ObjVal)
+                    res["dual_bound"] = float(m.DualObjVal)
+                    res["gap"] = abs(res["objective"] - res["dual_bound"]) / max(1.0, abs(res["objective"]))
+                    res["starts"] = {pid: int(s) for (pid, s), v in model["x"].items() if v.X > 0.5}
             finally:
-                model["m"].dispose()  # always hand the seat back
+                m.dispose()  # always hand the seat back
             res["build_seconds"] = round(build_s, 2)
             res["trace"] = [(t + build_s, v) for t, v in mm.incumbent_trace(log_path.read_text("utf-8", errors="ignore"))]
             return res
@@ -162,3 +178,20 @@ def solve_cold(name: str, time_limit: float, log_dir: Path, lock_timeout: float 
         return {"skipped": str(exc)}
     except TimeoutError as exc:
         return {"skipped": str(exc)}
+
+
+def mindopt_python() -> str | None:
+    """A Python interpreter that can import mindoptpy: $CAPOPT_MINDOPT_PYTHON, this interpreter, or a known conda
+    install. MindOpt can live in a different environment from capopt (here: the Anaconda Python next to
+    C:/mindopt/2.3.0), so MindOpt runs execute in a subprocess of that interpreter."""
+    import subprocess
+    import sys
+    cands = [os.environ.get("CAPOPT_MINDOPT_PYTHON"), sys.executable, "C:/Conda/anaconda3/python.exe",
+             str(Path.home() / "anaconda3" / "python.exe"), str(Path.home() / "miniconda3" / "python.exe")]
+    for py in [c for c in cands if c]:
+        if not Path(py).exists():
+            continue
+        r = subprocess.run([py, "-c", "import mindoptpy"], capture_output=True, timeout=60)
+        if r.returncode == 0:
+            return py
+    return None

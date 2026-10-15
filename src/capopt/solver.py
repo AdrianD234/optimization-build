@@ -63,7 +63,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     inst = I.load(name)
     log: list[str] = []
     status: dict[int, str] = {}
-    if not inst.penalised:
+    if not inst.penalised and inst.cash_cap is None:  # idle cash free and uncapped: L = T-1 alone is exact
         L_order = [inst.T - 1]
         others: list[int] = []
     else:
@@ -135,7 +135,7 @@ def solve_sequential(name: str, encoding: str = "step", balance: str = "cumulati
     t0 = time.time()
     inst = I.load(name)
     tr = Trace(t0=time.perf_counter())
-    L0 = inst.min_last_year() if inst.penalised else inst.T - 1
+    L0 = inst.min_last_year() if (inst.penalised or inst.cash_cap is not None) else inst.T - 1
     m = last_year_model(inst, L0, encoding, balance)
     r = highs_solve(m, tr, threads=threads, time_limit=time_limit)
     best = tr.best
@@ -143,7 +143,7 @@ def solve_sequential(name: str, encoding: str = "step", balance: str = "cumulati
     dual = r.dual_bound if r.dual_bound is not None else -np.inf
     status = {L0: "solved" if proven else "time limit"}
     log = [f"L={L0}: {r.status} {r.seconds:.1f}s nodes {r.nodes}"]
-    if inst.penalised:  # LP-bound every other last year; solve the survivors one after another
+    if inst.penalised or inst.cash_cap is not None:  # LP-bound every other last year; solve the survivors
         for L in range(L0 + 1, inst.T):
             if lp_bound(inst, L) >= tr.best - 1e-9 * abs(tr.best):
                 status[L] = "pruned (LP)"

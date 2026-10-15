@@ -121,3 +121,27 @@ def test_relative_gap_target_stops_within_the_gap(tmp_path):
     assert r.proven
     assert r.objective <= bf + 1e-3 * abs(bf) + 1e-6  # within the requested gap of the true optimum
     assert r.dual_bound <= bf + 1e-6                   # and the reported bound stays valid
+
+
+# hard cash cap (policy variant H17): capped tiny instances, with and without holding penalties
+CAPPED = [(6, 9, 100, 4, True, 0.8, 1.0, 60), (6, 9, 100, 7, True, 0.8, 1.0, 40), (5, 8, 100, 1, False, -0.04, 1e-4, 50)]
+
+
+@pytest.mark.parametrize("cfg", CAPPED)
+def test_hard_cash_cap_matches_brute_force(tmp_path, cfg):
+    *args, cap = cfg
+    raw = S.tiny(*args)
+    raw["cash_cap_units"] = cap
+    raw["name"] += f"_cap{cap}"
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, arg = S.brute_force(inst)
+    if arg is None:
+        pytest.skip("no schedule satisfies this cap")
+    for r in (solver.solve_sequential(str(path), time_limit=30),
+              solver.solve(str(path), workers=2, time_limit=60, n_leaves=4),
+              solver.solve_reference_highs(str(path), time_limit=60, threads=1)):
+        assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+        ev = evaluate(inst, inst.starts_from_dict(r.starts))
+        last = ev["last_build_year_index"]
+        assert ev["feasible"] and max(ev["closing_balance_units"][:last], default=0) <= cap + 1e-6
