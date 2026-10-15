@@ -51,7 +51,7 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 
 | Phase | Status |
 |---|---|
-| 0 Foundations | **Done.** Evaluator parity, formulations, numba kernel, synthetic generator, test suite (115 tests), CI on Ubuntu and Windows � Python 3.11/3.13 |
+| 0 Foundations | **Done.** Evaluator parity, formulations, numba kernel, synthetic generator, test suite (115 tests), CI on Ubuntu and Windows � Python 3.11/3.13 |
 | 1 Baseline | **Done.** B0 (stock HiGHS on the reference model) on all four instances; it hit the raw_nopenalty time-limit hang, which the watchdog handled |
 | 2 Formulation ladder | **Done.** I1/I2 single-thread runs prove all four instances, including raw_nopenalty (never proven by MindOpt), with a new optimum |
 | 3 Parallel and primal | **In progress.** I3 split-and-solve, I4 re-splitting, I5 LNS workers; 3 repeats each |
@@ -83,7 +83,8 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 | Decomposition soundness | Model value >= true objective when last < L (property test on random schedules); LP bound <= best-known at L = Lmin; split bounds partition the option sets | `tests/test_decomposition.py` |
 | Smoke | End to end in seconds: a small synthetic instance solved to proven optimality and checked against brute force; one benchmark instance solved for 20 s with a feasible, referee-scored result | `tests/test_smoke.py` |
 | Regression (slow, `-m slow`) | Full pipeline proves both penalised instances optimal and matches best-known to 1e-9 relative | `tests/test_regression.py` |
-| CLI and bench | `capopt solve` writes a schedule that the referee accepts; report generation from stored results | `tests/test_cli.py` |
+| CLI and bench | `capopt solve` writes a schedule that the referee accepts; report generation from stored results | `tests/test_cli_and_bench.py` |
+| Campaign watchdog | Progress counts and ETA; STALLED on a stale heartbeat, dead runner or overdue run; NOT_STARTED; COMPLETE; launch-and-verify rejects bad specs and failed spawns; a detached runner that is killed is detected | `tests/test_campaign.py` |
 
 CI (GitHub Actions): ruff lint, then the unit and smoke tests on Ubuntu and Windows, Python 3.11 and 3.13. The slow regression and benchmark runs stay on the 20-thread workstation (CI runners have 2-4 cores and noisy timing).
 
@@ -105,6 +106,34 @@ CI (GitHub Actions): ruff lint, then the unit and smoke tests on Ubuntu and Wind
 * `main` is protected in spirit: work happens on `exp/<id>-<slug>` or `feat/<slug>` branches with PRs; CI must be green.
 * New experiment: add `benchmarks/experiments/expNN_*.py`, record results under `benchmarks/results/exp/`, and summarise in `docs/EXPERIMENTS.md`.
 * Never edit `benchmark_pack/instances` or `benchmark_pack/reference` (tests enforce this).
+
+### Running long benchmarks (agent runbook)
+
+This rule exists because of a real incident. On 2026-10-15 a 48-run holdout benchmark launched from an agent's shell died at launch, and nobody noticed for about 50 minutes (see `docs/EXPERIMENTS.md`, "Infrastructure bugs"). The rule: **no run may go unobserved for more than 5 minutes.**
+
+1. **Never start long jobs with bare `&` or `( ... &)` from the Bash tool on this Windows machine.** Such jobs can die silently when the calling shell exits.
+2. **Use a campaign.** Write a spec (`{"name": ..., "time_limit": ..., "runs": [...]}`, or `configs` × `instances` × `seeds`), then start it with launch-and-verify:
+
+   ```bash
+   capopt campaign launch --spec benchmarks/campaigns/holdout.json
+   ```
+
+   This writes a launch marker, starts the runner detached (its own process group, no console, out of the calling job where Windows allows it), and waits until the runner's heartbeat appears. It exits non-zero with the log tail if that doesn't happen within 60 s. A run that is short enough to watch can instead go through one `run_in_background` call with `capopt campaign run --spec ...`.
+3. **Arm the watcher straight away**, with the Monitor tool (timeout up to 30 min, re-armed on expiry):
+
+   ```bash
+   capopt watch <campaign>
+   ```
+
+   It prints one line per state change: STARTED, PROGRESS n/N, STALLED (with the reason), COMPLETE or FAILED. It exits on COMPLETE (0) or FAILED (1).
+4. **Check at any time** with `capopt status <campaign>`: percent done, current run, elapsed time, ETA and heartbeat age. It exits 1 on STALLED, NOT_STARTED or FAILED. STALLED means one of:
+   * no heartbeat for 5 minutes;
+   * the runner process is gone before the campaign finished;
+   * the current run is past its time limit plus 5 minutes.
+
+   NOT_STARTED means no progress file 60 s after launch.
+5. **On STALLED or NOT_STARTED**, read `benchmarks/results/<campaign>/runner.log`, fix the cause, and relaunch. Completed runs keep their own result files.
+6. **Keep the machine idle while timing.** One campaign at a time, and never in parallel with another timed run or a MindOpt solve.
 
 ## 8. Risks
 
