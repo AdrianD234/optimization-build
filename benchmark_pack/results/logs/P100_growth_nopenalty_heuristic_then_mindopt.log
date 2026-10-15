@@ -1,0 +1,32 @@
+Original model: rows = 18315 columns = 6310 nonzeros = 65698
+                indicator = 236
+Tolerance: primal = 1e-06 int = 1e-06 mipgap = 0 mipgapAbs = 0
+Limit: time = 899.9907759 node = -1 stalling = -1 solution = -1
+presolver terminated; took 24 ms
+presolver terminated; took 797 ms
+[warn] Model contains large bounds that may result in numerical issues
+Parallelism: root=16, tree=16
+Root relaxation: -138939441747810 iteration = 214 time = 2.261
+
+Evaluated  InQueue     DualBound     Incumbent      Gap      Time
+        0        0 -1.389394e+14 -1.389380e+14    0.00%        4s
+        0        0 -1.389394e+14 -1.389380e+14    0.00%       37s
+        0        0 -1.389385e+14 -1.389380e+14    0.00%       53s
+        0        0 -1.389385e+14 -1.389380e+14    0.00%       71s
+        0        0 -1.389384e+14 -1.389381e+14    0.00%      124s
+        0        0 -1.389384e+14 -1.389381e+14    0.00%      137s
+        0        0 -1.389384e+14 -1.389381e+14    0.00%      137s
+        0        0 -1.389383e+14 -1.389381e+14    0.00%      140s
+        0        0 -1.389383e+14 -1.389381e+14    0.00%      141s
+
+Restart
+[warn] Model contains large bounds that may result in numerical issues
+Parallelism: root=16, tree=16
+Root relaxation: -138938407948216 iteration = 59 time = 0.34
+
+Evaluated  InQueue     DualBound     Incumbent      Gap      Time
+        0        0 -1.389384e+14 -1.389381e+14    0.00%      141s
+        0        0 -1.389384e+14 -1.389381e+14    0.00%      156s
+        0        0 -1.389382e+14 -1.389381e+14    0.00%      160s
+        0        0 -1.389382e+14 -1.389382e+14    0.00%      169s
+        0        0 -1.389382e+14 -1.389382e+14    0.00%      174s

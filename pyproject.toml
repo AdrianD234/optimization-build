@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "capopt"
+version = "0.1.0"
+description = "Capital-programme scheduling optimiser built on HiGHS: decomposition, problem-specific heuristics and a benchmark harness against MindOpt."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.26", "highspy>=1.11", "numba>=0.60"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-timeout>=2", "ruff>=0.6"]
+
+[project.scripts]
+capopt = "capopt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "smoke: fast end-to-end checks (seconds)",
+  "slow: full benchmark-scale runs (minutes); run with -m slow",
+]
+addopts = "-ra -m 'not slow'"
+timeout = 600
+
+[tool.ruff]
+line-length = 135
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E731", "E702", "B023", "B905"]

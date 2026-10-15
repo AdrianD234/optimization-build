@@ -1,0 +1,18 @@
+{
+ "benchmark_pack/instances/P100_growth_nopenalty.json": "2533aff2cee33779fc0f65930f0573d06161c4b9d0aaaa2fedf88eacf4154bab",
+ "benchmark_pack/instances/P100_growth_penalised.json": "29a3a5e73b0ed941e4bcde7d5bef609feae024657bab87dc498e6cd090d41016",
+ "benchmark_pack/instances/P100_raw_nopenalty.json": "161b22fd3a78ab55f53d6533ca83ac800c2de6a43a0cb7ffd4c3ca127f79ac29",
+ "benchmark_pack/instances/P100_raw_penalised.json": "ce3971df51ac58f032bd6e1f38d522a9a2675f33acdea4f3f773305594388e97",
+ "benchmark_pack/reference/evaluate.py": "e9d00f78e54e49090c962b194106dc920eff096485eb0730815e35185f88ec83",
+ "benchmark_pack/reference/hill_climb.py": "40d717b6639a4542cc660354fa7b1ff5d513a9ab1617f59f1893eb154eb2c6d1",
+ "benchmark_pack/reference/mindopt_model.py": "51611ac9a6c04605efcf8d656fdb047f64ec9e929c47990e01860d03d9f1ba4c",
+ "benchmark_pack/reference/run_benchmark.py": "fe312477889d07cf7cce18077f008e2c70685512d594cf5521d4d7db8ae67e95",
+ "benchmark_pack/solutions/P100_growth_nopenalty_best_known.json": "48d52291c2dc8aa0f0b8a30e2cc65a1764e9f2fedd84df7a65778ae22b53ff05",
+ "benchmark_pack/solutions/P100_growth_nopenalty_reference.json": "9766bc54e81e3d4f72509051700a197060e1259e55764ab7d199cf89dc0ffd33",
+ "benchmark_pack/solutions/P100_growth_penalised_best_known.json": "1219b3b75c71a78b8acd6da17c1e0d56960e4d543bd770f6ea32dcc27dfcd532",
+ "benchmark_pack/solutions/P100_growth_penalised_reference.json": "123c35671237604bcda3b3f218f23a0bcf8c78a3354f1b5f3a9471bfe8b19ee1",
+ "benchmark_pack/solutions/P100_raw_nopenalty_best_known.json": "3cd87328725ec28dabe982320c201f39eb7bf1b1762f442f04c89a1e751f0289",
+ "benchmark_pack/solutions/P100_raw_nopenalty_reference.json": "0af2fbb03acee4d015b9e39277a7fbca5fef71a8f2eda49e1082bd2221e66da5",
+ "benchmark_pack/solutions/P100_raw_penalised_best_known.json": "2bdff8124d1eee7dfa1a4bedb2f09c60fae8227624e27736d26a2efb042d991c",
+ "benchmark_pack/solutions/P100_raw_penalised_reference.json": "7cb246f8e5c32eca0d9eb60df44eeefa3d635bc0b3bd6b0729226692b2a16093"
+}
