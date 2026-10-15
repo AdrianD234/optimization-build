@@ -63,11 +63,24 @@ class SolveResult:
     nodes: int = 0
 
 
+_SCHEDULER_THREADS: list[int] = []
+
+
+def new_highs(threads: int = 1) -> highspy.Highs:
+    """A Highs instance with an explicit thread count. HiGHS keeps one process-wide task scheduler; asking for a
+    different thread count once it exists makes run() fail ("Not Set"), so the scheduler is reset when it changes."""
+    if _SCHEDULER_THREADS and _SCHEDULER_THREADS[0] != threads:
+        highspy.Highs.resetGlobalScheduler(True)
+    _SCHEDULER_THREADS[:] = [threads]
+    h = highspy.Highs()
+    h.setOptionValue("threads", int(threads))
+    return h
+
+
 def make_highs(model: Model, threads: int = 1, time_limit: float = 60.0, rel_gap: float = 1e-9, abs_gap: float = 1e-6,
                log: bool = False, seed: int = 0, options: dict | None = None) -> highspy.Highs:
-    h = highspy.Highs()
+    h = new_highs(threads)
     h.setOptionValue("output_flag", bool(log))
-    h.setOptionValue("threads", int(threads))
     h.setOptionValue("time_limit", float(time_limit))
     h.setOptionValue("mip_rel_gap", float(rel_gap))
     h.setOptionValue("mip_abs_gap", float(abs_gap))

@@ -53,17 +53,39 @@ CONFIGS: dict[str, tuple[str, str, Callable[..., solver.Result]]] = {
                        lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0)),
     "capopt_lns": ("I5", "+ 4 LNS workers around the shared incumbent (first 60 s)",
                    lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0, lns_workers=4, lns_seconds=60.0)),
+    "mindopt_cold": ("M", "MindOpt cold, live re-run (one solve at a time under the licence lock)", None),
 }
+# Runs that must never be killed by the watchdog: killing MindOpt mid-solve can lock the floating-licence seat.
+NEVER_KILL = {"mindopt_cold"}
 
 
 def machine() -> dict[str, Any]:
     return {"platform": platform.platform(), "processor": platform.processor(), "threads": os.cpu_count()}
 
 
+def _mindopt_result(name: str, time_limit: float, out_dir: Path) -> solver.Result | dict:
+    from . import mindopt_runner
+    t0 = time.time()
+    r = mindopt_runner.solve_cold(name, time_limit, out_dir / "mindopt_cold" / "logs")
+    if "skipped" in r:
+        return r
+    st = r.get("starts")
+    return solver.Result(name, r.get("objective", float("inf")), st, r["status"] == "OPTIMAL",
+                         r.get("dual_bound", float("-inf")), time.time() - t0, [tuple(x) for x in r["trace"]], {},
+                         [f"MindOpt {r['status']} gap {r.get('gap')} in {r['seconds']}s (build {r['build_seconds']}s)"])
+
+
 def run(config: str, name: str, time_limit: float = 900.0, seed: int = 0, out_dir: Path = RESULTS) -> dict[str, Any]:
     rung, desc, fn = CONFIGS[config]
     t = time.time()
-    r = fn(name, time_limit, seed)
+    r = _mindopt_result(name, time_limit, out_dir) if config == "mindopt_cold" else fn(name, time_limit, seed)
+    if isinstance(r, dict):  # MindOpt could not run here: record why; the report keeps the pack's recorded run
+        rec = {"config": config, "rung": rung, "instance": name, "seed": seed, "skipped": r["skipped"],
+               "generated": datetime.now().isoformat(timespec="seconds"), "machine": machine()}
+        d = out_dir / config
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}_s{seed}.skipped.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+        return rec
     best = I.best_known(name)["objective"]
     ref = referee_score(name, r.starts) if r.starts else {"feasible": False}
     rec = {
@@ -95,6 +117,18 @@ def run_isolated(config: str, name: str, time_limit: float = 900.0, seed: int = 
            "--time-limit", str(time_limit), "--no-isolate", "--out-dir", str(out_dir)]
     t = time.time()
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL)  # the parent prints the summary line
+    if config in NEVER_KILL:
+        # MindOpt stops itself at MaxTime. Be patient; if it still has not finished, leave it running (killing it can
+        # lock the licence seat) and record that, rather than block the benchmark forever.
+        try:
+            proc.wait(timeout=3 * time_limit + 600)
+        except subprocess.TimeoutExpired:
+            return {"config": config, "instance": name, "seed": seed, "skipped":
+                    f"no result after {3 * time_limit + 600:.0f}s; process {proc.pid} left running to protect the licence"}
+        skipped = d / f"{name}_s{seed}.skipped.json"
+        if skipped.exists():
+            return json.loads(skipped.read_text(encoding="utf-8"))
+        return json.loads((d / f"{name}_s{seed}.json").read_text(encoding="utf-8"))
     try:
         proc.wait(timeout=time_limit + grace)
         rec = json.loads((d / f"{name}_s{seed}.json").read_text(encoding="utf-8"))
@@ -170,7 +204,7 @@ def _median(xs: list[float | None]) -> float | None:
 def load_results(out_dir: Path = RESULTS) -> dict[str, dict[str, list[dict]]]:
     res: dict[str, dict[str, list[dict]]] = {}
     for cfg in CONFIGS:
-        for f in sorted((out_dir / cfg).glob("*.json")) if (out_dir / cfg).exists() else []:
+        for f in sorted((out_dir / cfg).glob("*_s*[0-9].json")) if (out_dir / cfg).exists() else []:
             rec = json.loads(f.read_text(encoding="utf-8"))
             res.setdefault(rec["instance"], {}).setdefault(cfg, []).append(rec)
     return res

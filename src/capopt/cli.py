@@ -42,6 +42,9 @@ def main(argv: list[str] | None = None) -> int:
                     out = Path(a.out_dir)
                     rec = (bench.run(cfg, name, a.time_limit, seed, out) if a.no_isolate
                            else bench.run_isolated(cfg, name, a.time_limit, seed, out))
+                    if "skipped" in rec:
+                        print(f"[{cfg}] {name} s{seed}: skipped ({rec['skipped']})", flush=True)
+                        continue
                     print(f"[{cfg}] {name} s{seed}: obj {rec['objective']:.6e} proven {rec['proven']} "
                           f"1% {rec['time_to_1pct']} 0.1% {rec['time_to_0.1pct']} bk {rec['time_to_best_known']} "
                           f"proof {rec['time_to_proof']} ({rec['seconds']}s)", flush=True)

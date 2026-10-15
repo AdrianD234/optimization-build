@@ -21,6 +21,7 @@ from . import instance as I
 from .evaluate import evaluate
 from .formulation import last_year_model
 from .parallel import solve_parallel
+from .solve import new_highs
 
 
 @dataclass
@@ -42,7 +43,7 @@ def lp_bound(inst: I.Instance, L: int) -> float:
         m = last_year_model(inst, L, "pulse", "recursive")
     except ValueError:
         return np.inf
-    h = highspy.Highs()
+    h = new_highs(1)
     h.setOptionValue("output_flag", False)
     h.setOptionValue("solve_relaxation", True)
     m.builder.to_highs(h)

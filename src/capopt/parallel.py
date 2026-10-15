@@ -26,7 +26,7 @@ import numpy as np
 from . import instance as I
 from .evaluate import objective
 from .formulation import Model, last_year_model
-from .solve import sink
+from .solve import new_highs, sink
 
 Split = tuple[int, int, int]  # (project, start year, side): side 0 => start <= s, side 1 => start > s
 
@@ -61,9 +61,8 @@ def split_bounds(model: Model, splits: list[Split]) -> tuple[list[int], list[flo
 
 
 def _highs(model: Model, splits: list[Split], relax: bool, time_limit: float, seed: int = 0) -> highspy.Highs | None:
-    h = highspy.Highs()
+    h = new_highs(1)
     h.setOptionValue("output_flag", False)
-    h.setOptionValue("threads", 1)
     h.setOptionValue("time_limit", float(time_limit))
     h.setOptionValue("mip_rel_gap", 1e-9)
     h.setOptionValue("mip_abs_gap", 1e-6)

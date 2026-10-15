@@ -21,6 +21,7 @@ import highspy
 import numpy as np
 
 from .formulation import Model
+from .solve import new_highs
 
 
 @dataclass
@@ -127,10 +128,9 @@ def cut_row(model: Model, cov: Cover) -> tuple[float, float, list[int], list[flo
 
 def root_loop(model: Model, rounds: int = 20, max_cuts: int = 50) -> tuple[list[float], list[Cover]]:
     """LP cut loop: returns the LP bound after each round and the cuts added to model.builder."""
-    from .formulation import MipBuilder  # noqa: F401  (rows are appended to the model's builder)
     bounds, added = [], []
     for _ in range(rounds + 1):
-        h = highspy.Highs()
+        h = new_highs(1)
         h.setOptionValue("output_flag", False)
         h.setOptionValue("solve_relaxation", True)
         model.builder.to_highs(h)

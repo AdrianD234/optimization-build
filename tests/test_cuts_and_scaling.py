@@ -43,3 +43,18 @@ def test_objective_scaling_is_a_power_of_two_and_lp_solves(instances, best_known
         assert m.user(m.solver_units(123.25)) == 123.25
     b = lp_bound(inst, 18 if inst.penalised else inst.T - 1)
     assert np.isfinite(b) and b <= best_known[name]["objective"] + 1e-9 * abs(b)
+
+
+def test_mixed_thread_counts_in_one_process_still_solve(instances):
+    """Regression: HiGHS' process-wide scheduler made a 1-thread MIP after default-thread LPs fail with 'Not Set'."""
+    from capopt.solve import Trace, new_highs, solve
+    inst = instances["P100_growth_nopenalty"]
+    h = new_highs(4)
+    h.setOptionValue("output_flag", False)
+    m = last_year_model(inst, None, "step", "cumulative")
+    m.builder.to_highs(h)
+    h.setOptionValue("solve_relaxation", True)
+    h.run()
+    root_loop(m, rounds=3)
+    r = solve(m, Trace(), threads=1, time_limit=60)
+    assert r.status == "Optimal"
