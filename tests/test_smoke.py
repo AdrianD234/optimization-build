@@ -86,3 +86,12 @@ def test_parallel_with_root_cuts_matches_brute_force(tmp_path):
     bf, _ = S.brute_force(I.from_dict(raw))
     r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, cut_rounds=5)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_quick_try_finishes_easy_instances_before_the_pool(tmp_path):
+    raw = S.tiny(5, 8, 100, 0, True)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, quick_seconds=5, cut_rounds=3)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    assert any("quick try: Optimal" in line for line in r.log)

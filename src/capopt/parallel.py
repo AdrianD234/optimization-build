@@ -13,12 +13,15 @@ column bounds for either encoding, so leaves can use any formulation.
 from __future__ import annotations
 
 import heapq
+import json
 import multiprocessing as mp
 import os
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import highspy
 import numpy as np
@@ -140,11 +143,21 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
 _W: dict = {}
 
 
-def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, extra_rows=()):
+def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None):
     model = last_year_model(I.load(name), L, encoding, balance)
-    for lo, hi, cols, vals in extra_rows:  # root cuts computed once by the master
-        model.builder.row(lo, hi, cols, vals)
-    _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model)
+    _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
+              cuts_loaded=False)
+
+
+def _load_cuts() -> None:
+    """Append the master's root cuts (written to cuts_path before any task that needs them is submitted)."""
+    if _W["cuts_loaded"] or not _W["cuts_path"]:
+        return
+    path = Path(_W["cuts_path"])
+    if path.exists():
+        for lo, hi, cols, vals in json.loads(path.read_text(encoding="utf-8")):
+            _W["model"].builder.row(lo, hi, cols, vals)
+    _W["cuts_loaded"] = True
 
 
 def _offer(starts: np.ndarray, obj: float) -> None:
@@ -155,6 +168,7 @@ def _offer(starts: np.ndarray, obj: float) -> None:
 
 
 def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) -> dict:
+    _load_cuts()
     model: Model = _W["model"]
     h = _highs(model, splits, False, time_limit, seed)
     if h is None:
@@ -200,6 +214,7 @@ def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
 def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> dict:
     """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
     rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes."""
+    _load_cuts()
     model: Model = _W["model"]
     inst = model.inst
     rng = np.random.default_rng(seed)
@@ -275,7 +290,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    balance: str = "cumulative", time_limit: float = 900.0, incumbent: np.ndarray | None = None,
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
-                   lns_seconds: float = 30.0, cut_rounds: int = 0) -> ParallelResult:
+                   lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -285,6 +300,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
 
     lns_workers: that many workers run LNS around the shared incumbent for `lns_seconds` before joining the tree.
     cut_rounds: rounds of the root cover-cut loop (cuts.py), run once by the master and shipped to every worker.
+    quick_seconds: while the worker pool spawns, the master tries to solve the whole model directly for this long, so
+        an easy instance is finished before the parallel machinery is even up.
+    The pool starts spawning first; the quick try, the cut loop and the ramp-up all overlap process start-up.
 
     idle: called with the current incumbent value whenever the master is waiting on workers (one small unit of work per
     call), e.g. LP-bounding the other last years."""
@@ -294,12 +312,6 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     inst = I.load(name)
     model = last_year_model(inst, L, encoding, balance)
     log: list[str] = []
-    extra_rows: list = []
-    if cut_rounds:
-        from .cuts import cut_row, root_loop
-        bounds, cuts = root_loop(model, cut_rounds)
-        extra_rows = [cut_row(model, c) for c in cuts]
-        log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
     ctx = mp.get_context("spawn")
     lock = ctx.Lock()
     best_val = ctx.Value("d", np.inf, lock=False)
@@ -319,9 +331,36 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
 
     closed: list[float] = []      # dual bounds of finished subtrees
     resplits = 0
-    with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
-                             initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance, extra_rows)) as pool:
-        warm = [pool.submit(_noop) for _ in range(workers)]  # the pool spawns while the master builds the ramp-up
+    leaves: list[Node] = []
+    pruned = 0
+    fd, tmp = tempfile.mkstemp(suffix=".cuts.json")
+    os.close(fd)
+    cuts_path = Path(tmp)
+    cuts_path.unlink()  # workers read it only after the master has written it
+    pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
+                               initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
+                                         str(cuts_path) if cut_rounds else None))
+    try:
+        warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
+        if quick_seconds > 0:
+            from .solve import Trace
+            from .solve import solve as highs_solve
+            qt = Trace()
+            q0 = time.time() - t0
+            r = highs_solve(model, qt, threads=1, time_limit=quick_seconds, start=incumbent)
+            if qt.best < best_val.value:
+                best_val.value = qt.best
+                best_starts[:] = [int(x) for x in qt.best_starts]
+            trace.extend((q0 + pt, v) for pt, v, _ in qt.points)
+            log.append(f"quick try: {r.status} in {r.seconds:.2f}s")
+            if r.status == "Optimal":
+                closed.append(best_val.value if r.dual_bound is None else max(r.dual_bound, best_val.value))
+                return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits)
+        if cut_rounds:
+            from .cuts import cut_row, root_loop
+            bounds, cuts = root_loop(model, cut_rounds)
+            cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
+            log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
         leaves, pruned = ramp_up(model, n_leaves, best_val.value)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         wait(warm)
@@ -382,6 +421,14 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"lns: {r['tries']} sub-MIPs, {r['wins']} improvements")
         if best_val.value < last_seen:
             trace.append((time.time() - t0, best_val.value))
+        return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits)
+    finally:
+        stop.value = 1
+        pool.shutdown(wait=False, cancel_futures=True)  # don't wait for idle workers to exit: the result is final
+        cuts_path.unlink(missing_ok=True)
+
+
+def _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits) -> ParallelResult:
     if resplits:
         log.append(f"re-splits: {resplits}")
     best = best_val.value
