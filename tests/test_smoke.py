@@ -111,3 +111,13 @@ def test_start_cap_is_respected_and_optimal(tmp_path, cap):
         assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
         st = inst.starts_from_dict(r.starts)
         assert np.bincount(st, minlength=inst.T).max() <= cap
+
+
+def test_relative_gap_target_stops_within_the_gap(tmp_path):
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, rel_gap=1e-3)
+    assert r.proven
+    assert r.objective <= bf + 1e-3 * abs(bf) + 1e-6  # within the requested gap of the true optimum
+    assert r.dual_bound <= bf + 1e-6                   # and the reported bound stays valid

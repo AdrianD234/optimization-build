@@ -27,9 +27,9 @@ import highspy
 import numpy as np
 
 from . import instance as I
-from .evaluate import objective
+from .evaluate import evaluate, objective
 from .formulation import Model, last_year_model
-from .solve import new_highs, sink
+from .solve import new_highs, sink, sink_bound
 
 Split = tuple[int, int, int]  # (project, start year, side): side 0 => start <= s, side 1 => start > s
 
@@ -63,11 +63,12 @@ def split_bounds(model: Model, splits: list[Split]) -> tuple[list[int], list[flo
     return cols, lbs, ubs
 
 
-def _highs(model: Model, splits: list[Split], relax: bool, time_limit: float, seed: int = 0) -> highspy.Highs | None:
+def _highs(model: Model, splits: list[Split], relax: bool, time_limit: float, seed: int = 0,
+           rel_gap: float = 1e-9) -> highspy.Highs | None:
     h = new_highs(1)
     h.setOptionValue("output_flag", False)
     h.setOptionValue("time_limit", float(time_limit))
-    h.setOptionValue("mip_rel_gap", 1e-9)
+    h.setOptionValue("mip_rel_gap", float(rel_gap))
     h.setOptionValue("mip_abs_gap", 1e-6)
     h.setOptionValue("random_seed", int(seed))
     model.builder.to_highs(h)
@@ -89,14 +90,43 @@ class Node:
     frac: list[tuple[float, int, int]] = field(compare=False, default_factory=list)  # (score, p, s) candidates
 
 
+_LP_CACHE: dict[int, tuple[highspy.Highs, int]] = {}
+
+
+def _lp_solver(model: Model) -> highspy.Highs:
+    """One LP-relaxation HiGHS instance per model, reused across tree nodes: a node only changes column bounds, so
+    dual simplex warm-starts from the previous basis instead of rebuilding the model and solving it cold. On the
+    233-project CPO models this took the 60-leaf ramp-up from ~40 s to a few seconds. Rebuilt when the model gains
+    rows (root cuts)."""
+    key = id(model)
+    cached = _LP_CACHE.get(key)
+    if cached is None or cached[1] != len(model.builder.row_lo):
+        h = _highs(model, [], True, 60.0)
+        _LP_CACHE[key] = (h, len(model.builder.row_lo))
+        cached = _LP_CACHE[key]
+    return cached[0]
+
+
 def _lp_node(model: Model, splits: list[Split]) -> Node | None:
-    h = _highs(model, splits, True, 60.0)
-    if h is None:
+    bc = split_bounds(model, splits)
+    if bc is None:
         return None
-    h.run()
-    if h.getModelStatus() != highspy.HighsModelStatus.kOptimal:
+    h = _lp_solver(model)
+    cols, lbs, ubs = bc
+    idx = np.array(cols, dtype=np.int32)
+    if cols:
+        h.changeColsBounds(len(cols), idx, np.array(lbs), np.array(ubs))
+    try:
+        h.run()
+        ok = h.getModelStatus() == highspy.HighsModelStatus.kOptimal
+        x = np.asarray(h.getSolution().col_value) if ok else None
+        obj = h.getInfo().objective_function_value if ok else None
+    finally:  # restore the model's own bounds for the next node
+        if cols:
+            h.changeColsBounds(len(cols), idx, np.array([model.builder.lb[c] for c in cols]),
+                               np.array([model.builder.ub[c] for c in cols]))
+    if not ok:
         return None
-    x = np.asarray(h.getSolution().col_value)
     cand = []
     inst = model.inst
     for p, (opts, cols) in enumerate(zip(model.options, model.start_cols)):
@@ -109,7 +139,7 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(model.user(h.getInfo().objective_function_value), splits, cand[:8])
+    return Node(model.user(obj), splits, cand[:8])
 
 
 def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[Node], int]:
@@ -143,10 +173,10 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf) -> tuple[list[N
 _W: dict = {}
 
 
-def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None):
+def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9):
     model = last_year_model(I.load(name), L, encoding, balance)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
-              cuts_loaded=False)
+              cuts_loaded=False, rel_gap=rel_gap)
 
 
 def _load_cuts() -> None:
@@ -170,7 +200,7 @@ def _offer(starts: np.ndarray, obj: float) -> None:
 def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, leaf_cutoff: bool = True) -> dict:
     _load_cuts()
     model: Model = _W["model"]
-    h = _highs(model, splits, False, time_limit, seed)
+    h = _highs(model, splits, False, time_limit, seed, _W["rel_gap"])
     if h is None:
         return {"status": "empty", "bound": np.inf, "found": []}
     if leaf_cutoff:  # start the leaf with the shared incumbent as HiGHS' objective bound (exp05: can hurt)
@@ -184,7 +214,7 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
         _offer(st, obj)
 
     def on_interrupt(e):
-        if model.user(e.data_out.mip_dual_bound) >= _W["best_val"].value - 1e-9 * abs(_W["best_val"].value):
+        if model.user(e.data_out.mip_dual_bound) >= _W["best_val"].value - _W["rel_gap"] * abs(_W["best_val"].value):
             e.data_in.user_interrupt = True
 
     h.cbMipImprovingSolution.subscribe(on_improve)
@@ -194,7 +224,7 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
     status = h.modelStatusToString(h.getModelStatus())
     best = _W["best_val"].value
     bound = model.user(info.mip_dual_bound)
-    if status in ("Infeasible",) or (status != "Optimal" and bound >= best - 1e-9 * abs(best)):
+    if status in ("Infeasible",) or (status != "Optimal" and bound >= best - _W["rel_gap"] * abs(best)):
         bound = np.inf if status == "Infeasible" else max(bound, best)
         status = "pruned"
     elif status == "Optimal":
@@ -229,8 +259,20 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0) -> d
         with _W["lock"]:
             cur = np.array(_W["best_starts"][:], dtype=np.int64)
             cur_val = _W["best_val"].value
-        kind = rng.integers(3)
-        if kind == 0:  # time window of starts
+        kind = rng.integers(4) if inst.penalised else rng.integers(3)
+        if kind == 3:  # cash hot spot: projects active around a year whose cash sits in the expensive tiers
+            ev = evaluate(inst, cur)
+            if ev["feasible"]:
+                closing = np.asarray(ev["closing_balance_units"][:ev["last_build_year_index"]], dtype=float)
+                excess = np.maximum(0.0, closing - inst.base_frac * np.maximum(0.0, inst.F[:len(closing)]))
+                w = excess + 1e-9 * closing.max(initial=1.0) + 1e-12
+                a = int(rng.choice(len(w), p=w / w.sum())) if len(w) else 0
+            else:
+                a = int(rng.integers(0, int(cur.max()) + 1))
+            ends = cur + inst.last_nz
+            r = int(rng.integers(1, 4))
+            free = (cur <= a + r) & (ends >= a - r)
+        elif kind == 0:  # time window of starts
             a = int(rng.integers(0, max(1, int(cur.max()) - 2)))
             free = (cur >= a) & (cur <= a + int(rng.integers(2, 6)))
         elif kind == 1:  # random subset
@@ -292,7 +334,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
-                   leaf_cutoff: bool = True) -> ParallelResult:
+                   leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -331,7 +373,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
 
     def tol() -> float:
         b = best_val.value
-        return b - 1e-9 * abs(b) if b < np.inf else np.inf
+        return b - rel_gap * abs(b) if b < np.inf else np.inf
 
     closed: list[float] = []      # dual bounds of finished subtrees
     resplits = 0
@@ -343,7 +385,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     cuts_path.unlink()  # workers read it only after the master has written it
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
-                                         str(cuts_path) if cut_rounds else None))
+                                         str(cuts_path) if cut_rounds else None, rel_gap))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:
@@ -351,7 +393,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             from .solve import solve as highs_solve
             qt = Trace()
             q0 = time.time() - t0
-            r = highs_solve(model, qt, threads=1, time_limit=quick_seconds, start=incumbent)
+            r = highs_solve(model, qt, threads=1, time_limit=quick_seconds, start=incumbent, rel_gap=rel_gap, seed=seed)
             if qt.best < best_val.value:
                 best_val.value = qt.best
                 best_starts[:] = [int(x) for x in qt.best_starts]
@@ -359,7 +401,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"quick try: {r.status} in {r.seconds:.2f}s")
             if r.status == "Optimal":
                 closed.append(best_val.value if r.dual_bound is None else max(r.dual_bound, best_val.value))
-                return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits)
+                return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
+        # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
+        # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
+        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0) for i in range(lns_workers)]
         if cut_rounds:
             from .cuts import cut_row, root_loop
             bounds, cuts = root_loop(model, cut_rounds)
@@ -368,7 +413,6 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         leaves, pruned = ramp_up(model, n_leaves, best_val.value)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         wait(warm)
-        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i, t0) for i in range(lns_workers)]
         seq = 0
         heap: list[tuple[float, int, list[Split], float | None]] = []
         for leaf in leaves:
@@ -376,6 +420,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         heapq.heapify(heap)
         running: dict = {}
         last_seen = best_val.value
+        last_bound, bound_trace = -np.inf, []
         while heap or running:
             for f in [f for f in lns if f.done()]:
                 lns.remove(f)
@@ -389,16 +434,24 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 if remaining <= 0:
                     closed.append(b); continue
                 tl = min(remaining, sl) if sl else remaining
-                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k, t0, leaf_cutoff)
+                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k + 7919 * seed, t0, leaf_cutoff)
                 running[fut] = (b, splits, sl, sl is not None and tl < remaining)
             done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
             done = {f for f in done if f in running}
+            min_closed = min(closed) if closed else np.inf
             if idle is not None and not done:
                 idle(best_val.value)
             if best_val.value < last_seen:
                 last_seen = best_val.value
                 trace.append((time.time() - t0, last_seen))
                 sink(trace[-1][0], last_seen, best_starts[:])
+            # proven bound now: finished subtrees, queued subtrees (LP bounds), running subtrees (their start bounds)
+            bound_now = min([min_closed] + [hb[0] for hb in heap[:1]] + [rv[0] for rv in running.values()]
+                            + [best_val.value])
+            if bound_now > last_bound + 1e-12 * abs(bound_now):
+                last_bound = bound_now
+                bound_trace.append((time.time() - t0, bound_now))
+                sink_bound(bound_trace[-1][0], bound_now)
             for fut in done:
                 b, splits, sl, sliced = running.pop(fut)
                 r = fut.result()
@@ -425,20 +478,20 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"lns: {r['tries']} sub-MIPs, {r['wins']} improvements")
         if best_val.value < last_seen:
             trace.append((time.time() - t0, best_val.value))
-        return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits)
+        return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
     finally:
         stop.value = 1
         pool.shutdown(wait=False, cancel_futures=True)  # don't wait for idle workers to exit: the result is final
         cuts_path.unlink(missing_ok=True)
 
 
-def _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits) -> ParallelResult:
+def _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap=1e-9) -> ParallelResult:
     if resplits:
         log.append(f"re-splits: {resplits}")
     best = best_val.value
     dual = min(closed + [best])
     starts = np.array(best_starts[:], dtype=np.int64) if best < np.inf else None
-    proven = dual >= best - 1e-9 * abs(best)
+    proven = dual >= best - rel_gap * abs(best)
     mono, run = [], np.inf
     for t, v in sorted(trace):
         if v < run:

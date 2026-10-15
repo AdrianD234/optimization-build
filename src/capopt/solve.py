@@ -23,6 +23,14 @@ def sink(t: float, obj: float, starts) -> None:
             fh.write(json.dumps({"t": round(t, 3), "obj": obj, "starts": [int(x) for x in starts]}) + "\n")
 
 
+def sink_bound(t: float, bound: float) -> None:
+    """Append a proven dual bound to $CAPOPT_TRACE_FILE (if set), so watchers can show the live MIP gap."""
+    path = os.environ.get("CAPOPT_TRACE_FILE")
+    if path and bound > -float("inf"):
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": round(t, 3), "bound": bound}) + "\n")
+
+
 @dataclass
 class Trace:
     """Incumbent history on a shared clock. Every point is a schedule re-scored by the exact evaluator."""

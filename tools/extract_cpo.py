@@ -42,6 +42,12 @@ SCENARIOS = {
     "CPO233_cfadsds_P50": "CFADS less debt service - objective bestP50_Real_LIN40_base_cfads_ds_TOT.pkl",
     "CPO233_s1500_P50": "objective bestP50Real_LIN40_base_s1500_pm0_TOT.pkl",
     "CPO233_s2000_P50": "objective bestP50Real_LIN40_base_s2000_pm0_TOT.pkl",
+    # further scenarios with a COPT solve time in the CPO notebook's log (benefit "high" = benefits x 1.2)
+    "CPO233_s1500_P50high": "objective bestP50Real_LIN40_high_s1500_pm0_TOT.pkl",
+    "CPO233_s2000_P50high": "objective bestP50Real_LIN40_high_s2000_pm0_TOT.pkl",
+    "CPO233_cfadsds_P50high": "CFADS less debt service - objective bestP50_Real_LIN40_high_cfads_ds_TOT.pkl",
+    "CPO233_cfadsds_P95": "CFADS less debt service - objective bestP95_Real_LIN40_base_cfads_ds_TOT.pkl",
+    "CPO233_cfadsds_P95high": "CFADS less debt service - objective bestP95_Real_LIN40_high_cfads_ds_TOT.pkl",
 }
 
 
