@@ -64,7 +64,7 @@ None of the theorem-proving results (IMO gold, Erdős problems, OpenAI's 2026 ma
 
 1. **The evolve-a-heuristic method:** FunSearch, AlphaEvolve, EoH, ReEvo, OpenEvolve and ShinkaEvolve. Each works only when there is a cheap, exact, un-gameable scorer, and `reference/evaluate.py` is exactly that.
 2. **Evolving the LNS neighbourhood selector** (LLM-LNS, ICML 2025). This is the same component we already have, and its authors report that it beats hand-designed and ML-learned LNS.
-3. **Evolving model-level cuts** (EvoCut). Our penalised instances need 3-4 minutes of *proof* time with a commercial solver. Primal heuristics cannot shorten proof time; a tighter formulation can. EvoCut reports cuts that carried over to HiGHS. Its validity check is only empirical, so we would add a formal proof step (see below).
+3. **Evolving model-level cuts** (EvoCut). Our penalised instances need minutes of *proof* time even with a commercial solver. Primal heuristics cannot shorten proof time; a tighter formulation can. EvoCut reports cuts that carried over to HiGHS. Its validity check is only empirical, so we would add a formal proof step (see below).
 4. **Bi-fidelity evaluation** (BiFE) and **co-evolving the training instances** (DHEvo). These keep evaluation cost down and limit over-fitting to our four instances.
 
 ### Constraints specific to HiGHS

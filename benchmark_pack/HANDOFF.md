@@ -10,8 +10,8 @@ A capital programme optimiser for a transport investment portfolio: projects hav
 
 ## What is already known
 
-* **No-penalty instances are easy to solve well**: simulated annealing gets within 0.0-0.3% in 30 s and MindOpt is within 0.1% in 10-30 s. Proving optimality is another matter: growth proves in about 2 minutes, raw had not proven after 15 minutes (gap 0.0007%) - many near-equal schedules.
-* **Penalised instances are the real test.** The steep holding-cash bands (1,000 to 1,000,000 per $0.01M-year) make the landscape cliff-like: most single moves either break feasibility (negative balance) or push cash into an expensive band. The baseline heuristic stays 100-430% above the optimum. MindOpt (cold) is within 1% after 5-94 s, finds the optimum after 3-3.5 minutes and proves it at 3-4 minutes.
+* **No-penalty instances are easy to solve well**: simulated annealing gets within 0.0-0.3% in 30 s. Proving optimality is another matter: many near-equal schedules.
+* **Penalised instances are the real test.** The steep holding-cash bands (1,000 to 1,000,000 per $0.01M-year) make the landscape cliff-like: most single moves either break feasibility (negative balance) or push cash into an expensive band. The baseline heuristic stays 100-430% above the optimum.
 * In effect the penalised objective asks for **cumulative spend to track cumulative funding within about $35M every year** until the last build year. Projects have lumpy profiles (a few have zero-spend years mid-build) and durations of 1-16 years.
 * Growth instances defer fast-growing, high-BCR projects; raw instances build best-BCR-first. A "growth-neutral schedule" (solve the raw instance, then value it with growth) captures about 96-97% of the growth-optimised PV.
 
@@ -20,7 +20,7 @@ A capital programme optimiser for a transport investment portfolio: projects hav
 * Time-indexed structure: each year's spend should be close to the envelope - think bin-packing / scheduling with a cumulative resource rather than a generic MIP.
 * Large-neighbourhood search: free 10-20 projects (or a 5-10 year window), re-optimise exactly (DP or a small sub-MIP), repeat.
 * Use the LP relaxation (or the no-penalty optimum) to guide rounding / fix-and-optimise.
-* Warm-starting MindOpt from the weak baseline heuristic did not help (it was slower on 3 of 4 instances): a warm start has to be good to pay for itself. Most of MindOpt's time on the penalised instances goes into finding the last fraction of a percent, then proving it.
+* Warm-starting MindOpt from the weak baseline heuristic did not help: a warm start has to be good to pay for itself. Most of MindOpt's time on the penalised instances goes into finding the last fraction of a percent, then proving it.
 
 ## Practical notes
 

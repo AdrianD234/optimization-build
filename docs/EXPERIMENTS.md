@@ -19,7 +19,7 @@ Each experiment states its hypothesis, protocol and result, and links to its sto
 | raw_penalised | step / cumulative | time limit (180) | 2.9 | 26.4 | - | - |
 | raw_penalised | step / recursive | time limit (180) | 13.1 | 28.7 | - | - |
 
-* **Verdict**: kept. Step encoding with cumulative balance rows is the default. `growth_penalised` is proven on one thread in 18 s (MindOpt cold: 179 s). `raw_penalised` is still open after 180 s, so it needs parallelism.
+* **Verdict**: kept. Step encoding with cumulative balance rows is the default. `growth_penalised` is proven on one thread in 18 s. `raw_penalised` is still open after 180 s, so it needs parallelism.
 
 ## exp-LP: LP bounds of every last year L (penalised instances)
 
@@ -45,8 +45,8 @@ Each experiment states its hypothesis, protocol and result, and links to its sto
 ## Ladder runs I1/I2: fixed-last-year decomposition on one thread (all four instances)
 
 * **Protocol**: `capopt bench --configs fixedL_pulse_1t` and `--configs fixedL_step_1t`, 900 s limit, run as two concurrent single-thread chains (plus the B0 chain) on the 20-thread machine. Stored under `benchmarks/results/fixedL_*`.
-* **Result** (proof times; MindOpt cold on 20 threads in brackets): raw_penalised 447 s (I1) / **216 s** (I2) [232]; growth_penalised 24 / **21** [179]; raw_nopenalty **222** / 249 [not proven in 900 s]; growth_nopenalty 1.5 / **0.58** [132].
-* **New proven optimum for P100_raw_nopenalty**: -74,119,916,766,966. That is 5.2e-6 relative better than the pack's best-known (-74,119,531,264,779, which MindOpt never proved). Both encodings prove it independently, and `benchmark_pack/reference/evaluate.py` confirms it. Stored in `benchmarks/solutions/P100_raw_nopenalty_proven_optimal.json` (the pack itself is left unchanged).
+* **Result** (proof times): raw_penalised 447 s (I1) / **216 s** (I2); growth_penalised 24 / **21**; raw_nopenalty **222** / 249; growth_nopenalty 1.5 / **0.58**.
+* **New proven optimum for P100_raw_nopenalty**: -74,119,916,766,966. That is 5.2e-6 relative better than the pack's best-known (-74,119,531,264,779, not previously proven). Both encodings prove it independently, and `benchmark_pack/reference/evaluate.py` confirms it. Stored in `benchmarks/solutions/P100_raw_nopenalty_proven_optimal.json` (the pack itself is left unchanged).
 
 ## Bug found: objective scaling on the no-penalty instances
 
@@ -87,13 +87,12 @@ Proof times in seconds, as the median (range) over 3 repeats. Stored under `benc
 
 | Config | raw_penalised | growth_penalised | raw_nopenalty | growth_nopenalty | Verdict |
 |---|---|---|---|---|---|
-| MindOpt cold (recorded) | 232 | 179 | not proven (900) | 132 | reference |
 | I3 split-and-solve, 60 leaves | **81** (80-82) | **6.4** (6.3-6.4) | 73 (73-73) | **2.6** | kept (default) |
 | I4 + time-sliced re-splitting (10 s) | 139 (102-140) | 6.3 | 79 (79-81) | 2.6 | **rejected**: restarts discard HiGHS' search state, and the optimum is found later |
 | I5 + 4 LNS workers (60 s) | 81 (79-81) | 6.6 | 75 (75-75) | 2.7 | neutral: 6-10 improvements per worker, but never the final one before the tree finds it |
 | I6 + root cover cuts (30 rounds) | 95 (92-99) | 8.0 | **58** (57-59) | 5.1 | mixed: -21% on raw_nopenalty, +17% on raw_penalised; the cut loop ran serially before the pool |
 
-Times to within 1% and 0.1% are 1.8-3.5 s for I3 on every instance (MindOpt: 5-94 s and 10-105 s). The pack's best-known value is reached in 2.4-73 s (MindOpt: 107-704 s).
+Times to within 1% and 0.1% are 1.8-3.5 s for I3 on every instance. The pack's best-known value is reached in 2.4-73 s.
 
 ## I7/I8: overlap work with pool start-up
 

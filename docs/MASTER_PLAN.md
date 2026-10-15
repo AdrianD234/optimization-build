@@ -35,7 +35,7 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 | Phase | Work | Exit criterion |
 |---|---|---|
 | 0. Foundations | Instance loader, exact evaluator, formulations, trace capture, test suite, CI | All tests green; evaluator parity with the referee on the best-known schedules and 1,000+ random schedules |
-| 1. Baseline | **B0** = HiGHS on the faithful port of the MindOpt model (`reference_bigm`), 900 s limit, all 4 instances | Times recorded next to the MindOpt cold row |
+| 1. Baseline | **B0** = HiGHS on the faithful port of the MindOpt model (`reference_bigm`), 900 s limit, all 4 instances | Times recorded as the public reference row |
 | 2. Formulation ladder | **I1** fixed-L decomposition (pulse/recursive, 1 thread); **I2** step and cumulative encodings (exp01); **I3** LP-bound pruning of L != Lmin | I2 single-thread beats B0 on all four instances |
 | 3. Parallel and primal | **I4** split-and-solve on 20 workers (exp02: leaves 60/120/240, encodings); **I5** racing portfolio for the primal side (seeds × encodings) plus injection of external solutions; **I6** LP-rounding and LNS warm start | Penalised instances proven faster than MindOpt cold |
 | 4. Bound strengthening | Lifted cover / GUB-cover cuts on the cumulative rows, added as rows in an outer root loop; window aggregation; start-window tightening (MILP_FRONTIER ideas 2 and 4) | Fewer nodes at L = Lmin; raw_nopenalty proven |
@@ -47,13 +47,17 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 * `docs/research/MILP_FRONTIER.md`: 41 papers with 15 ranked, testable ideas, plus calibration (Mittelmann, Oct 2026: HiGHS about 5x slower than the best commercial solver on MIPLIB, so the gains must come from structure and parallelism).
 * `docs/research/AI_MATH_RESULTS.md`: OpenAI and DeepMind AI-for-maths releases (IMO gold, Erdős results, the `openai/math` manuscripts, AlphaEvolve, FunSearch). The verdict is that no theorem in them speeds up this MILP. The transferable part is the *method*: an LLM proposes code and an exact scorer judges it. That becomes Phase 6.
 
+## 3a. Real-data validation and the iteration loop
+
+Validation has moved from perturbed copies of the pack to the Capital Programme Optimiser's real 233-project GPS27 scenarios (data under the gitignored `private/`). The target is COPT's logged solve times. How we iterate toward them (scoreboard, KPI, screen, full campaign, review, converge or back-off rules, ranked backlog) is in [ITERATION_LOOP.md](ITERATION_LOOP.md).
+
 ## 3b. Status (2026-10-15)
 
 | Phase | Status |
 |---|---|
 | 0 Foundations | **Done.** Evaluator parity, formulations, numba kernel, synthetic generator, test suite (115 tests), CI on Ubuntu and Windows � Python 3.11/3.13 |
 | 1 Baseline | **Done.** B0 (stock HiGHS on the reference model) on all four instances; it hit the raw_nopenalty time-limit hang, which the watchdog handled |
-| 2 Formulation ladder | **Done.** I1/I2 single-thread runs prove all four instances, including raw_nopenalty (never proven by MindOpt), with a new optimum |
+| 2 Formulation ladder | **Done.** I1/I2 single-thread runs prove all four instances, including raw_nopenalty (not previously proven), with a new optimum |
 | 3 Parallel and primal | **In progress.** I3 split-and-solve, I4 re-splitting, I5 LNS workers; 3 repeats each |
 | 4 Bound strengthening | **Started.** Cover cuts (I6); start-window tightening and lifting are next |
 | 5 Engine work | Not started. Nothing so far needs HiGHS internals |
@@ -62,7 +66,7 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 ## 4. Benchmark protocol
 
 * **Instances**: the four in `benchmark_pack/instances/`, unchanged.
-* **Comparator**: MindOpt 2.3 cold, from `benchmark_pack/results/benchmark_results.json`. It was measured on this same machine (Intel family 6 model 198, 20 threads, Windows 11 build 26300). Same hardware and OS make the comparison like-for-like, but MindOpt's run-to-run variance (noted in the pack) still applies. MindOpt is not installed on this machine yet. When it is, `capopt bench --configs mindopt_cold` re-runs it live (below), and the report shows the live rows next to the recorded one.
+* **Comparator**: MindOpt 2.3 cold, from the pack's recorded runs (kept privately in `private/pack_mindopt/`). It was measured on this same machine (Intel family 6 model 198, 20 threads, Windows 11 build 26300). Same hardware and OS make the comparison like-for-like, but MindOpt's run-to-run variance (noted in the pack) still applies. MindOpt is not installed on this machine yet. When it is, `capopt bench --configs mindopt_cold` re-runs it live (below), and the report shows the live rows next to the recorded one.
 * **MindOpt licence concurrency** (floating licence: one solve at a time), handled in `src/capopt/mindopt_runner.py`:
   * every MindOpt solve holds a machine-wide OS file lock, so solves from any process queue instead of colliding (the OS releases the lock if the holder crashes);
   * the licence is probed with exponential backoff before each solve;
@@ -137,7 +141,7 @@ This rule exists because of a real incident. On 2026-10-15 a 48-run holdout benc
 
 ## 8. Risks
 
-* **MindOpt variance**: the pack notes run-to-run variance (`growth_nopenalty` proved in 30 s once and 132 s another time). Our claims use medians over seeds and keep the margin visible.
+* **MindOpt variance**: the pack notes run-to-run variance . Our claims use medians over seeds and keep the margin visible.
 * **Over-fitting to four instances**: Phase 6 must use perturbed instances. The decomposition and parallel layers are generic for this problem family.
 * **Numerics**: penalty weights up to 1e6 next to objectives of about 1e10. Proofs use rel_gap 1e-9, and results are re-scored exactly.
 * **HiGHS API limits**: no lazy or user-cut callbacks, so cuts are added as rows. Shared cutoffs between processes go through `objective_bound` plus an interrupt callback.

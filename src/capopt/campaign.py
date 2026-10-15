@@ -100,6 +100,94 @@ def solve_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, Any]:
     return {"status": "done", "objective": r.objective, "proven": r.proven, "time_to_proof": round(r.seconds, 2)}
 
 
+def reference_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, Any]:
+    """Default pipeline on an instance file, compared with a reference solution file.
+
+    run = {"instance": <instance json>, "reference": <solution json with "evaluator_objective">,
+           "options": {...solver.solve kwargs, e.g. "rel_gap": 1e-5}, "label": <name for the outputs>}
+    Incumbents stream to <out_dir>/<label>.trace.jsonl while the solve runs (watchers read it live). The record, with
+    times to within 1% / 0.1% of the reference and to the reference objective itself, goes to <out_dir>/<label>.json.
+    """
+    from . import solver
+    from .bench import time_to
+    label = run.get("label") or Path(str(run["instance"])).stem
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    ref = json.loads(Path(run["reference"]).read_text(encoding="utf-8"))
+    target = float(ref["evaluator_objective"])
+    trace_file = out / f"{label}.trace.jsonl"
+    trace_file.unlink(missing_ok=True)
+    os.environ["CAPOPT_TRACE_FILE"] = str(trace_file)
+    try:
+        r = solver.solve(str(run["instance"]), run.get("workers"), time_limit, **run.get("options", {}))
+    finally:
+        os.environ.pop("CAPOPT_TRACE_FILE", None)
+    rec = {"label": label, "instance": str(run["instance"]), "reference": str(run["reference"]),
+           "options": run.get("options", {}), "time_limit": time_limit, "objective": r.objective, "proven": r.proven,
+           "dual_bound": r.dual_bound, "seconds": round(r.seconds, 2), "reference_objective": target,
+           "reference_meta": {k: ref.get(k) for k in ("source", "cpo_gap", "cpo_created_at", "cpo_threads")},
+           "vs_reference_rel": (r.objective - target) / abs(target),
+           "time_to_ref_within_1pct": time_to(r.trace, target, 0.01),
+           "time_to_ref_within_0.1pct": time_to(r.trace, target, 0.001),
+           "time_to_ref_objective": time_to(r.trace, target, 0.0),
+           "time_to_proof": round(r.seconds, 2) if r.proven else None,
+           "trace": r.trace, "log": r.log, "starts": r.starts}
+    (out / f"{label}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    return {"status": "done", "objective": r.objective, "proven": r.proven, "time_to_proof": rec["time_to_proof"],
+            "vs_reference_rel": rec["vs_reference_rel"], "time_to_ref_within_0.1pct": rec["time_to_ref_within_0.1pct"]}
+
+
+def mindopt_reference_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, Any]:
+    """A cold MindOpt solve of the reference (big-M/indicator) model, compared with a reference solution.
+
+    run = {"instance": <instance json>, "reference": <solution json>, "rel_gap": 1e-5, "label": ...}
+    The solve runs in the interpreter that has mindoptpy (mindopt_runner.mindopt_python), under the licence lock.
+    It is never killed: MindOpt stops itself at MaxTime, and only if it overruns by 3x + 10 min is it left running and
+    recorded as skipped. Times in the trace are from the start of the MindOpt process: model build plus solve.
+    """
+    from . import mindopt_runner
+    from .bench import time_to
+    label = run.get("label") or Path(str(run["instance"])).stem
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    py = mindopt_runner.mindopt_python()
+    if py is None:
+        return {"status": "skipped", "reason": "no Python with mindoptpy found (set CAPOPT_MINDOPT_PYTHON)"}
+    raw = out / f"{label}.mindopt_raw.json"
+    raw.unlink(missing_ok=True)
+    cmd = [py, str(ROOT / "benchmarks" / "experiments" / "run_mindopt.py"), str(run["instance"]), str(time_limit),
+           str(run.get("rel_gap", 1e-5)), str(raw), str(out / "logs")]
+    proc = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc.wait(timeout=3 * time_limit + 600)
+    except subprocess.TimeoutExpired:
+        return {"status": "skipped", "reason": f"MindOpt overran; pid {proc.pid} left running to protect the licence"}
+    if not raw.exists():
+        return {"status": "failed", "error": f"MindOpt run wrote no result (exit {proc.returncode})"}
+    res = json.loads(raw.read_text(encoding="utf-8"))
+    if "skipped" in res:
+        return {"status": "skipped", "reason": res["skipped"]}
+    ref = json.loads(Path(run["reference"]).read_text(encoding="utf-8"))
+    target = float(ref["evaluator_objective"])
+    trace = [tuple(x) for x in res.get("trace", [])]
+    obj = res.get("evaluator_objective")
+    rec = {"label": label, "solver": "MindOpt (reference model, cold)", "instance": str(run["instance"]),
+           "rel_gap_target": run.get("rel_gap", 1e-5), "time_limit": time_limit, "status": res.get("status"),
+           "objective": obj, "mindopt_objective": res.get("objective"), "dual_bound": res.get("dual_bound"),
+           "gap": res.get("gap"), "seconds": res.get("seconds"), "build_seconds": res.get("build_seconds"),
+           "wall_seconds": res.get("wall_seconds"), "reference_objective": target,
+           "vs_reference_rel": None if obj is None else (obj - target) / abs(target),
+           "time_to_ref_within_1pct": time_to(trace, target, 0.01),
+           "time_to_ref_within_0.1pct": time_to(trace, target, 0.001),
+           "time_to_ref_objective": time_to(trace, target, 1e-6),  # the log prints ~7 significant figures
+           "time_to_gap_target": (res.get("build_seconds") or 0) + (res.get("seconds") or 0)
+           if res.get("status") == "OPTIMAL" else None,
+           "trace": trace, "starts": res.get("starts")}
+    (out / f"{label}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    return {"status": "done", "objective": obj, "proven": res.get("status") == "OPTIMAL",
+            "time_to_proof": rec["time_to_gap_target"], "vs_reference_rel": rec["vs_reference_rel"]}
+
+
 def sleep_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, Any]:
     """Machinery test: sleeps run['seconds']; raises if run['fail']."""
     time.sleep(float(run.get("seconds", 0.1)))
@@ -400,7 +488,9 @@ def launch(spec_path: str | Path, root: Path = RESULTS, verify_s: float = NOT_ST
                                       "launcher_pid": os.getpid()})
     try:
         if os.name == "nt":
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
+            # CREATE_NO_WINDOW, not DETACHED_PROCESS: a detached runner has no console at all, so every solver worker it
+            # spawns (20 per run) gets a visible console window of its own. With a hidden console, they all share it.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000  # CREATE_NO_WINDOW
             try:  # also leave the caller's job object, so closing the calling shell cannot take the runner down
                 proc = subprocess.Popen(cmd, creationflags=flags | 0x01000000, **kw)  # CREATE_BREAKAWAY_FROM_JOB
             except PermissionError:  # the job forbids breakaway: still detached, just inside the job

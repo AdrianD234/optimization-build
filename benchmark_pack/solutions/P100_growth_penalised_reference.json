@@ -1,12 +1,7 @@
 {
  "instance": "P100_growth_penalised",
- "source": "MindOpt 2.3 via the production pipeline (greedy multi-start warm start), 20 threads",
- "status": "OPTIMAL",
- "gap": 0.0,
- "solve_seconds": 151.8,
- "mindopt_objective": -13624914443.03859,
+ "source": "reference schedule from the original production pipeline (solver timings and status are kept privately)",
  "evaluator_objective": -13624914443.038557,
- "evaluator_vs_mindopt_rel_diff": 2.3798260820917998e-15,
  "starts": {
   "P001": 13,
   "P002": 0,

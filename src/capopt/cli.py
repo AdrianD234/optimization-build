@@ -85,7 +85,10 @@ def main(argv: list[str] | None = None) -> int:
                           f"proof {rec['time_to_proof']} ({rec['seconds']}s)", flush=True)
         return 0
     if a.cmd == "report":
-        print(bench.write_report())
+        print(bench.write_report())  # public: capopt vs the HiGHS baseline
+        if bench.mindopt_rows():     # private copy with the pack's MindOpt runs, when that data is present
+            bench.write_report(path=bench.PRIVATE_REPORT, include_mindopt=True)
+            print(f"(private report with MindOpt written to {bench.PRIVATE_REPORT})")
         return 0
     return 2
 

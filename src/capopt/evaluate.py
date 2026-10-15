@@ -26,7 +26,7 @@ def spend_profile(inst: Instance, starts: np.ndarray) -> tuple[np.ndarray, np.nd
 
 def cash_cost(inst: Instance, spend: np.ndarray, last: int) -> tuple[float, float, list[float]] | None:
     """(backlog, tier penalty, closing balances) for a spend profile with the given last build year; None if the
-    balance goes negative."""
+    balance goes negative, or above the instance's hard cash cap in a year before the last build year."""
     net, backlog, tiers = 0.0, 0.0, 0.0
     closing: list[float] = []
     F = inst.F
@@ -36,6 +36,8 @@ def cash_cost(inst: Instance, spend: np.ndarray, last: int) -> tuple[float, floa
             net = net + int(F[t]) - int(spend[t])
         if net < -1e-9:
             return None
+        if t < last and inst.cash_cap is not None and net > inst.cash_cap[t] + 1e-9:
+            return None  # hard cash cap (policy variant): only years before the last build year
         if t < last:
             backlog += net
             excess = max(0.0, net - env * inst.base_frac)
@@ -71,7 +73,7 @@ def evaluate(inst: Instance, starts: np.ndarray | list[int]) -> dict[str, Any]:
     last = int(np.nonzero(active)[0][-1])
     cc = cash_cost(inst, spend, last)
     if cc is None:
-        out["reason"] = "negative balance"
+        out["reason"] = "negative balance or above the hard cash cap"
         return out
     backlog, tiers, closing = cc
     pv_term = inst.pv_weight * pv_sum

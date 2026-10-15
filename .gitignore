@@ -13,3 +13,6 @@ benchmark_pack.zip
 *.nbc
 # campaign progress temp files
 *.tmp
+
+# Private data derived from the (private) Capital Programme Optimiser repo: never publish
+private/
