@@ -92,3 +92,40 @@ def test_watchdog_record_rebuilt_from_streamed_trace(tmp_path, monkeypatch):
     assert rec["killed"] and not rec["proven"] and rec["time_to_proof"] is None
     assert rec["time_to_1pct"] == 5.0 and rec["time_to_best_known"] == 9.0
     assert rec["referee"]["feasible"]
+
+
+def test_holdout_instances_resolve_by_name_and_path(tmp_path, monkeypatch):
+    raw = S.perturb("P100_growth_nopenalty", 7)
+    monkeypatch.setattr(I, "HOLDOUT", tmp_path)
+    assert cli.main(["holdout", "--seeds", "7", "--instances", "P100_growth_nopenalty", "--out-dir", str(tmp_path)]) == 0
+    path = tmp_path / f"{raw['name']}.json"
+    assert json.loads(path.read_text()) == raw and I.holdout_names() == [raw["name"]]
+    assert I.path_of(raw["name"]) == path and I.name_of(str(path)) == raw["name"]
+    assert I.path_of("P100_raw_penalised") == I.PACK / "instances" / "P100_raw_penalised.json"
+    assert I.best_known_objective(raw["name"]) is None
+    starts = I.best_known("P100_growth_nopenalty")["starts"]  # perturbing spend can make it infeasible, but it scores
+    assert "feasible" in bench.referee_score(str(path), starts)
+
+
+def test_holdout_report_retargets_to_best_proven(tmp_path):
+    def rec(cfg, obj, proven, trace, proof):
+        return {"config": cfg, "instance": "X_perturbed_s1", "objective": obj, "proven": proven, "trace": trace,
+                "time_to_proof": proof, "time_limit": 900.0, "referee": {"feasible": True}}
+    runs = [rec("capopt_parallel", -100.0, True, [(1.0, -99.5), (8.0, -100.0)], 10.0),
+            rec("capopt_quick_nocut", -100.0, True, [(0.5, -99.0), (4.0, -100.0)], 5.0),
+            rec("capopt_quick", -99.0, False, [(2.0, -99.0)], None)]
+    for r in runs:
+        d = tmp_path / "holdout" / r["config"]
+        d.mkdir(parents=True)
+        (d / "X_perturbed_s1_s0.json").write_text(json.dumps(r))
+    h = bench.holdout_table(tmp_path / "holdout")
+    assert h["targets"]["X_perturbed_s1"] == (-100.0, True) and not h["disagree"]
+    c = h["cells"]["X_perturbed_s1"]
+    assert c["capopt_parallel"]["time_to_1pct"] == 1.0 and c["capopt_parallel"]["time_to_target"] == 8.0
+    assert c["capopt_quick"]["time_to_target"] is None
+    s = h["summary"]
+    assert s["capopt_quick_nocut"]["fastest_proofs"] == 1 and s["capopt_parallel"]["fastest_proofs"] == 0
+    assert s["capopt_quick"]["sgm_time_to_proof"] == pytest.approx(900.0)  # a miss counts as the time limit
+    assert bench.shifted_geomean([5.0]) == pytest.approx(5.0)
+    text = "\n".join(bench.holdout_section(tmp_path / "holdout"))
+    assert "Holdout: perturbed instances" in text and "**5.0**" in text and "agree across configs: yes" in text

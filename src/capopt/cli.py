@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import bench, campaign, solver
+from . import bench, campaign, solver, synthetic
 from . import instance as I
 
 
@@ -20,12 +20,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--time-limit", type=float, default=900.0)
     s.add_argument("--leaves", type=int, default=60)
     b = sub.add_parser("bench", help="run benchmark configurations and store traces")
-    b.add_argument("--configs", default=",".join(bench.CONFIGS))
-    b.add_argument("--instances", default=",".join(I.INSTANCE_NAMES))
+    b.add_argument("--configs", default=None, help="comma-separated (default: all; with --holdout: the I3/I7-I9 ladder)")
+    b.add_argument("--instances", default=None,
+                   help="comma-separated instance names or JSON paths (default: the four pack instances)")
+    b.add_argument("--holdout", action="store_true",
+                   help="run on the instances in benchmarks/holdout/ (or --instances) and store under <out-dir>/holdout/")
     b.add_argument("--seeds", default="0")
     b.add_argument("--time-limit", type=float, default=900.0)
     b.add_argument("--no-isolate", action="store_true", help="run in this process (no watchdog subprocess)")
     b.add_argument("--out-dir", default=str(bench.RESULTS))
+    h = sub.add_parser("holdout", help="write perturbed copies of the pack instances to benchmarks/holdout/")
+    h.add_argument("--seeds", default="1,2,3")
+    h.add_argument("--instances", default=",".join(I.INSTANCE_NAMES))
+    h.add_argument("--spend-noise", type=float, default=0.1)
+    h.add_argument("--pv-noise", type=float, default=0.1)
+    h.add_argument("--out-dir", default=str(I.HOLDOUT))
     sub.add_parser("report", help="write benchmarks/BENCHMARK.md from stored runs")
     c = sub.add_parser("campaign", help="long benchmark campaigns with heartbeat (run in foreground, or launch detached)")
     c.add_argument("mode", choices=["run", "launch"], help="run: here, in the foreground; launch: detached + verified")
@@ -70,11 +79,25 @@ def main(argv: list[str] | None = None) -> int:
         if a.out and r.starts:
             Path(a.out).write_text(json.dumps({"starts": r.starts}, indent=1), encoding="utf-8")
         return 0 if r.starts else 1
+    if a.cmd == "holdout":
+        out = Path(a.out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        for name in a.instances.split(","):
+            for seed in (int(x) for x in a.seeds.split(",")):
+                raw = synthetic.perturb(name, seed, a.spend_noise, a.pv_noise)
+                (out / f"{raw['name']}.json").write_text(json.dumps(raw), encoding="utf-8")
+                print(out / f"{raw['name']}.json")
+        return 0
     if a.cmd == "bench":
-        for cfg in a.configs.split(","):
-            for name in a.instances.split(","):
+        out = Path(a.out_dir) / bench.HOLDOUT_DIR if a.holdout else Path(a.out_dir)
+        configs = a.configs or ",".join(bench.HOLDOUT_CONFIGS if a.holdout else bench.CONFIGS)
+        instances = a.instances.split(",") if a.instances else I.holdout_names() if a.holdout else I.INSTANCE_NAMES
+        if not instances:
+            print("no instances (run `capopt holdout` first)", file=sys.stderr)
+            return 1
+        for cfg in configs.split(","):
+            for name in instances:
                 for seed in (int(x) for x in a.seeds.split(",")):
-                    out = Path(a.out_dir)
                     rec = (bench.run(cfg, name, a.time_limit, seed, out) if a.no_isolate
                            else bench.run_isolated(cfg, name, a.time_limit, seed, out))
                     if "skipped" in rec:
