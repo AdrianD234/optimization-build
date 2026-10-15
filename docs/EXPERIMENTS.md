@@ -255,3 +255,19 @@ All runs: s2000_P50high, 20 workers, rel_gap 1e-5, 300 s, one seed unless stated
 
 * Per-kind yield (wins per sub-MIP minute, pooled): start-time windows are the most productive by about 2x; random subsets, active-year windows and big-project moves come next; cash hot spots are the weakest.
 * **Verdict**: a 28% lower median and a halved worst case. ALNS becomes the default (`lns_alns=True`). Against COPT's logged 56 s this setup is at 1.5-2.5x, from 2.3-4.7x before.
+
+## KPI pass 1: the six COPT-timed scenarios (s1500 set aside)
+
+Setup: the E20 configuration (warm start from each scenario's CPO schedule; 16 ALNS workers after the ramp-up with 15 s patience; cutoff after 60 s; strong branching k = 4; big-project LNS; idle LP trees), one seed, time limit 1.5x COPT's logged time (at least 300 s, at most 900 s).
+
+| Scenario | COPT logged (warm) | capopt | Gap at the limit | Final schedule vs the CPO's |
+|---|---|---|---|---|
+| s2000_P50high | 56 s | **proven in 106 s** | - | -1.27e-4 |
+| s2000_P50 | 108 s | not proven by 300 s | 1.5e-5 | -1.39e-4 |
+| cfadsds_P50 | 272 s | not proven by 408 s | 3.0e-4 | -7.2e-6 |
+| cfadsds_P95 | 433 s | not proven by 690 s | 1.9e-3 | 0 (no improvement) |
+| cfadsds_P50high | 491 s | not proven by 737 s | 9.1e-5 | -5.8e-6 |
+| cfadsds_P95high | 1,770 s | not proven by 938 s | 1.8e-3 | 0 (no improvement) |
+
+* The s2000 scenarios are close (one proof; the other 1.5x above the target gap).
+* The CFADS-after-debt-service scenarios are **bound-limited**. Their schedules match or beat the CPO's early (stable by 63-86 s), but their ramp-ups prune only 2-10 nodes (about 150 on s2000), and a few depth-5 to 9 leaves hold the global bound for the whole run.
