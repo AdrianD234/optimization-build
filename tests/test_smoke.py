@@ -163,7 +163,7 @@ def test_strong_branching_ramp_up_and_resplit_match_brute_force(tmp_path):
     path = write_instance(tmp_path, raw)
     bf, _ = S.brute_force(I.from_dict(raw))
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=6, slice_seconds=0.3, quick_seconds=0,
-                     sb_candidates=5)
+                     sb_candidates=-1)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
 
 

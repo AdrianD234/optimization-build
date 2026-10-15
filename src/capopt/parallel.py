@@ -88,6 +88,7 @@ class Node:
     bound: float
     splits: list[Split] = field(compare=False)
     frac: list[tuple[float, int, int]] = field(compare=False, default_factory=list)  # (score, p, s) candidates
+    n_frac: int = field(compare=False, default=0)  # projects fractional in the LP (all of them, not just the top 32)
 
 
 _LP_CACHE: dict[int, tuple[highspy.Highs, int]] = {}
@@ -151,7 +152,7 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(model.user(obj), splits, cand[:32])
+    return Node(model.user(obj), splits, cand[:32], len({p for _, p, _ in cand}))
 
 
 def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None,
@@ -489,7 +490,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         with a good warm start, when early LNS matters less).
     lns_patience (E18): an LNS worker joins the tree once the incumbent has not improved for this many seconds.
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
-    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
+    sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
+        16 when the root has more than 15 fractional projects, else 4). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
         callback either way; exp05 found the static bound can steer HiGHS' search badly.
@@ -563,7 +565,12 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
         free = workers if lns_after_rampup else workers - lns_workers
         sb_pool = pool if free >= 2 else None  # never queue behind LNS tasks that run for minutes
-        width = max(1, free // max(1, sb_candidates))
+        if sb_candidates < 0:  # E23 auto: 16 candidates when the root LP smears many projects (CFADS), else 4
+            root = _lp_node(model, [])
+            n_frac = root.n_frac if root is not None else 0
+            sb_candidates = 16 if n_frac > 15 else 4
+            log.append(f"strong branching: {sb_candidates} candidates ({n_frac} fractional projects at the root)")
+        width = max(1, -(-2 * free // max(1, sb_candidates)))  # E23: about 2x the free workers in tasks per round
         leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates, sb_pool, width)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         if lns_after_rampup:
