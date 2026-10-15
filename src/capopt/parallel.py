@@ -435,7 +435,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
-                   cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False) -> ParallelResult:
+                   cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False,
+                   lns_after_rampup: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -454,6 +455,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         (and the streamed gap) is exact rather than frozen at launch values; re-split children inherit the parent's
         bound; the log ends with a census of the leaves whose bounds were worst.
     lns_big (E13): LNS also uses the big-project neighbourhood (see _lns_task).
+    lns_after_rampup (E15): submit the LNS workers only after the ramp-up, so strong branching has the whole pool (useful
+        with a good warm start, when early LNS matters less).
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
@@ -516,16 +519,22 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
         # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
-        lns = [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big) for i in range(lns_workers)]
+        def start_lns() -> list:
+            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big)
+                    for i in range(lns_workers)]
+        lns = [] if lns_after_rampup else start_lns()
         if cut_rounds:
             from .cuts import cut_row, root_loop
             bounds, cuts = root_loop(model, cut_rounds)
             cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
-        sb_pool = pool if workers - lns_workers >= 2 else None  # never queue behind LNS tasks that run for minutes
-        width = max(1, (workers - lns_workers) // max(1, sb_candidates))
+        free = workers if lns_after_rampup else workers - lns_workers
+        sb_pool = pool if free >= 2 else None  # never queue behind LNS tasks that run for minutes
+        width = max(1, free // max(1, sb_candidates))
         leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates, sb_pool, width)
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
+        if lns_after_rampup:
+            lns = start_lns()
         wait(warm)
         seq = 0
         heap: list[tuple[float, int, list[Split], float | None]] = []
