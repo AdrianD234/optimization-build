@@ -365,3 +365,361 @@ for fut in done:
    - UG and FiberSCIP keep the donor running and ship *some* of its open nodes. HiGHS exposes no API for exporting open nodes, so the nearest equivalent is to restart the victim *on one child* and queue the rest.
    - Dispatch first the child that contains the parent's best LP point, and pass the shared incumbent to every child as a solution hint (`setSolution`). `ProcessPoolExecutor` cannot pin a task to a particular worker, so locality is lost either way.
    - The HiGHS search tree is still lost. Worth trying only after R1–R3 show restarts are the bottleneck.
+
+---
+
+# E28 racing audit
+
+**Date:** 2026-10-16
+**Question:** Is E28 (`race_after` / `max_racers` in `solve_parallel`) sound? It runs several copies of one open leaf on idle workers, closes the leaf when any copy finishes it, and takes the best bound over the copies. Does it still keep the invariants of §1.5, and how does it interact with E27 stealing?
+
+## 5.1 Setup
+
+- **Code audited.** Commit `051f224` on `exp/e28-racing`: the group bookkeeping and the racing block in `solve_parallel`, the per-group live bound in `bound_now`, and the group-aware completion loop. `_solve_leaf` is unchanged from E27 (with the E27 audit's pinning fix, `sl = np.inf`, already in).
+- **Compute.** Same rules as §Setup: single-threaded, in-process, no pool. A timing campaign was running.
+- **Two checks.**
+  - **Master harness [M].** The real `solve_parallel` master loop runs with an in-process thread-pool stand-in for `ProcessPoolExecutor` and a scripted `_solve_leaf`. The script decides, per (group, copy), when the copy ends, with what status and bound, whether it obeys the stop flag, and whether it raises. Instance `P100_growth_penalised`, L = 18, 3 ramp-up leaves, the best-known schedule as incumbent. Only the master's own LPs (ramp-up, re-split) run HiGHS. The `closed` list is captured at `_finish`. Seven scenarios, S1–S6b (§5.4).
+  - **HiGHS check [M].** `_solve_leaf` was called directly on the 6 ramp-up leaves of the same model, with different seeds and different `objective_bound` cutoffs (§5.3).
+- **Scratch scripts** are not in the repo. Each scenario below is described well enough to re-implement.
+
+## 5.2 Headline
+
+1. **[I/M] No soundness bug.**
+   - The group bound max(copies) is valid, even though copies ran under different cutoffs (§5.3).
+   - Each group is closed, re-split or closed at its bound exactly once, in every interaction tried (§5.4).
+   - The per-group live bound in `bound_now` is valid.
+   - With `race_after=None`, E28 behaves exactly as E27: every group has one member, so the code paths reduce to the old ones.
+2. **Four robustness and liveness bugs, none of which can give a wrong answer.**
+   - **B1 [M]** A copy whose result would be ignored can still crash the solve, by raising.
+   - **B2 [M]** The run waits for stopped copies whose results it will ignore.
+   - **B3 [M]** E27 and E28 work against each other: E27 kills raced copies one at a time, and can pick an already-stopped copy as its victim.
+   - **B4 [I]** Racers never yield to queued work. This matters only when racing is combined with slicing or E27.
+3. **B5:** three counters and the docstring are slightly off (§5.7).
+4. **[L]** Racing is the classic ramp-up of UG/ParaSCIP and of the commercial solvers' concurrent mode. The literature says it pays only modestly, and mostly through variability. E28 uses it only at ramp-down, on one subtree. "Best bound over configurations" is the "light communication" rule of Carvajal et al. (2014), so E28's bound combination has a direct precedent.
+
+## 5.3 Bound validity (question 1) [I, M, L]
+
+**Argument [I].**
+
+- Notation:
+  - z\* is the optimum of the group's subtree.
+  - Copy i started with HiGHS `objective_bound` U_i: the shared incumbent when *that copy* started, or +inf when `cut` is False.
+  - β_i is the bound copy i returned or wrote to `live`.
+- For a single copy, HiGHS gives **z\* ≥ min(β_i, U_i)**.
+  - β_i is the minimum bound over open nodes (§2.4).
+  - Every node pruned against U_i holds no solution below U_i.
+- The incumbent only decreases, and each U_i is a past value of it. So at any later time t, best_t ≤ U_i for every copy. Hence:
+  - z\* ≥ max_i min(β_i, U_i) ≥ max_i min(β_i, best_t) = **min(max_i β_i, best_t)**.
+- So max over copies is a valid bound in exactly the sense every bound in this code is valid: *for solutions better than the incumbent*.
+  - `_finish` reports min(closed + [best]).
+  - Pruning compares against `tol()` ≤ best.
+  - `bound_now` includes `best_val`.
+  - Re-split children compare max(child LP, group bound) against `tol()`.
+  - All of these are uses of min(·, best).
+- Different cutoffs across copies do not matter, because only the *smallest* U enters, and best is below all of them.
+
+**The winning copy was "pruned" against a later, better incumbent.**
+
+- `pruned` means β_w ≥ best_ret − gap, where best_ret is the incumbent when the copy returned. So z\* ≥ min(β_w, U_w) ≥ best_ret − gap.
+- The closed value max(r.bound, group bound) ≥ best_ret ≥ best_final. So it never pulls the reported dual below best. **Sound.**
+
+**The winner is "Optimal" while the group bound is above its objective.**
+
+- This needs some copy j with β_j > z\*. By the inequality above, that forces U_j ≤ z\*, so the incumbent was already as good as anything in the subtree.
+- The closed value then exceeds z\* but is ≥ best, and min(closed + [best]) ignores it. **Sound.**
+
+**`bound_now`.**
+
+- Per open group it takes max(group bound, max over members of max(start, live[slot])).
+- Closed groups are skipped, because their value is already in `closed`.
+- A just-dispatched racer's slot reads −inf until the worker writes its start bound. The master resets `live[slot]` when the slot's previous future is processed, so that read is conservative.
+- **Valid.**
+
+**Literature [L].**
+
+- Carvajal et al. (2014) run several solver configurations on the same MILP. In their "light communication" mode they record the best lower bound and the best upper bound over all configurations, so "one configuration [can provide] the optimal solution and another the best dual bound". That is E28's max rule.
+
+**Measured [M]: HiGHS, 6 ramp-up leaves of `P100_growth_penalised`, L = 18.**
+
+- **Subtree optima.** Each leaf was solved to the end with no cutoff and 4 seeds. All 4 seeds returned the same final bound per leaf, so the subtree optimum z\* is known for each.
+- **Cutoff test.** On the 2 leaves whose seed-0 run ended `Optimal`, copies were run:
+  - with cutoffs U ∈ {+inf, global optimum, z\* + 10⁻³|z\*|, z\* − 10⁻⁴|z\*|}, i.e. cutoffs above, at and *below* the subtree optimum;
+  - with time limits of 0.3 s and 1.0 s, and seeds 0 and 1;
+  - 32 interrupted or finished copies in all.
+- **Result: 0 violations of z\* ≥ min(β_i, U_i)**, the per-copy inequality the max rule rests on.
+
+**Verdict: PASS.**
+
+## 5.4 No lost subtrees: exactly once (question 2) [I, M]
+
+**Group life cycle (code reading).**
+
+- A group is created at dispatch with one member. Members leave only in the completion loop, *after* `running.pop`.
+- On a finishing status (`Optimal`, `pruned`, `empty`, `Infeasible`), the group closes once: `closed=True`, and later members hit the `if grp["closed"]` branch.
+- On an open status, the group is re-split or closed at its bound only when `members` is empty.
+- The two branches are mutually exclusive. The closed flag is set before any later member is processed. The open branch deletes the group before it pushes children.
+- `del groups[g]` happens only when `members` is empty, so every running future's group exists. No `KeyError` is possible in `run_bounds`, the racing loop or the completion loop.
+- Group keys are heap `seq` ids, which are unique.
+
+**Scenarios (harness) [M].** Group 0 is the scripted leaf; the other two leaves close at once. "closed entries" counts the `closed` list at `_finish`.
+
+| # | Scenario | Result | OK? |
+|---|---|---|---|
+| S1 | The original runs 5 s and obeys stop. A racer (started at 0.57 s) finishes `Optimal` at 0.88 s | 3 closed entries (one per group). The original is stopped at 0.89 s and ignored. `races: 1 (1 won by a later copy)`. proven, 0.9 s wall | yes |
+| S2 | As S1, but the original ignores stop for 3 s, then returns `Optimal` | 3 closed entries, and the late `Optimal` is ignored. **Wall 3.1 s instead of 0.9 s** (B2) | sound; latency |
+| S3 | Slices of 2 s. Original and racer both time out on the slice | `re-splits: 1`, i.e. exactly one re-split of group 0, from the last member, with the max bound. Children close; 4 closed entries | yes |
+| S4 | E27 (`steal_after=1`) with racing (`max_racers=2`). The original's live bound is lower than the racer's | E27 stops the original at 1.1 s (open; the racer remains, so nothing happens), then stops the racer at 1.6 s, which re-splits the group. Log: `steals: 1` although two copies were killed | sound; B3, B5 |
+| S5 | A racer wins. The stopped original *raises* when it sees the stop flag | **`solve_parallel` raises `RuntimeError`**. The run is lost, although that copy's result would have been ignored (B1) | robustness |
+| S6 | The original finishes before `race_after` is reached | no racer, 3 closed entries | yes |
+| S6b | The master is slowed by 0.3 s per iteration, as during a re-split LP. A racer starts 0.3 s before the original finishes `Optimal` | the group is closed once by the original. The racer is stopped at its next poll and ignored | yes |
+
+**Interactions asked about.**
+
+- **A racer starts just as the original finishes.** The racing block can see a group whose futures are done but not yet processed, because `running` still holds them. It then starts a racer on a finished subtree. In the same iteration's completion loop, the original closes the group and sets the racer's flag, and the racer's result is ignored (S6b is the near-miss version). Sound, but it wastes one start-up. A cheap filter: skip groups with `any(f.done() for f in grp["members"])`.
+- **The original is stolen by E27 while racers run.** It returns `stolen`. Members remain, so nothing happens, and the racers carry the subtree (S4). Sound. The steal is pure waste, though, and `steals` does not count it (B3, B5).
+- **A stopped copy returns `Optimal` or `pruned` after the group closed.** It is ignored, which is fine. The group was closed with a whole-subtree proof. The ignored copy's incumbents are not lost: they went through `_offer` into shared memory during the solve, and `trace.extend(r["found"])` runs *before* the closed check.
+- **A member raises.** `fut.result()` propagates out of `solve_parallel`, as it did before E28. E28 adds exposure: a copy that was *told to stop*, and whose result is irrelevant, can now kill the run (S5, B1). Whether HiGHS can actually raise after a user interrupt is [unverified]. None was seen in §2's 30 forced interrupts or in the harness runs, which use a fake leaf.
+
+**Verdict: PASS (exactly once). B1 is a robustness gap.**
+
+## 5.5 Slot and steal-flag hygiene (question 3) [I]
+
+| Item | Analysis | OK? |
+|---|---|---|
+| Flag reset at dispatch | Both the queue dispatch and the racer dispatch set `steal[slot] = 0` before `pool.submit`. | yes |
+| Stop is set only on live members | The closing loop flags `running[f][4]` for f in `members`. All members are still in `running`, because a member leaves `members` only after `running.pop`. So the slot still belongs to that member. | yes |
+| A flag set on a done-but-unprocessed member | No effect. The slot is freed when that member is processed, and the next dispatch resets the flag. | yes |
+| The flag is read *after* `h.run()` (E27 audit §2.1) | E28 adds a writer: a copy that ended naturally (for example a slice timeout) just before its group closed can come back `stolen` instead of `Time limit reached`. Its group is closed, so it is ignored. | yes |
+| `free_slots` | Racing requires `free_slots` non-empty *and* `len(running) < tree_workers`. Stopped copies stay in `running` and keep their slot until they return, so the count of slots in use equals the number of running tree tasks. Slot −1 stays unreachable. | yes |
+| E27 `stealing` | Cleared when the victim's future completes, as before. **But** E27's candidate list does not exclude stopped copies of closed groups. The weakest live bound often *is* such a copy, because racing targets the weakest group, so E27 can "steal" a dead copy and then block real steals until that copy returns. | B3 |
+| `live[slot]` | Reset to −inf when a slot's future is processed. The worker writes its start bound when it starts. No stale value from another task can be read. | yes |
+
+**Verdict: PASS, with B3 as an inefficiency when E27 and E28 are combined.**
+
+## 5.6 Termination and the time limit (question 4) [I, M]
+
+- **A stale group cannot block `while heap or running`.** The loop condition does not use `groups`, and `del groups[g]` happens as each group's last member returns. The only way the loop waits is a live future in `running`, which always ends, at the latest at its HiGHS time limit.
+- **But the loop also waits for copies whose results it will ignore (B2).**
+  - The stop flag is honoured only at HiGHS' interrupt callback, which is skipped inside sub-MIPs (§2.3).
+  - The project notes also record HiGHS running far past `time_limit` on one model.
+  - S2 measured a 2.2 s delay from a copy that ignored stop for 3 s. When the last open group is closed by a racer, the run's wall time becomes that of the slowest-stopping loser.
+  - For a timing benchmark this is a direct, avoidable cost.
+- **Racers' deadlines.**
+  - A racer gets `max(0.5, grp["deadline"] − now)` and is started only if at least 1 s remains. So it never outlives its group's slice, or the global deadline, by more than its start-up time. Originals have the same start-up overrun.
+  - An unsliced group's racers run to the global deadline. At the deadline, the last member to return closes the group at the best bound (`Time limit reached`, not sliced), which is valid (§5.3).
+  - A pinned group (`sl = inf`) can be raced. E27 still never steals any of its members, because `rv[2]` is copied to the racers.
+- **Liveness of queued work (B4) [I].**
+  - Racers occupy workers until their group closes or their deadline passes. They are never pre-empted when the queue refills.
+  - With racing alone (no slicing, no E27), the queue never refills after the initial dispatch, apart from rare unexpected interrupts. So B4 cannot arise in that configuration.
+  - With `slice_seconds`, a re-split's children wait up to a racer's remaining slice.
+  - With E27, the children of a stolen leaf can wait behind racers of an *unsliced* group until the global deadline. E27 itself rarely fires, because racers keep the tree more than half busy.
+  - The queued children partition real work, while racers duplicate it.
+  - UG ends racing as soon as it switches to normal work distribution, so racers should yield.
+
+**Verdict: PASS for termination and the time limit. B2 is a wall-time cost; B4 needs a fix before racing is combined with slicing or E27.**
+
+## 5.7 Accounting (question 5) [I, M]
+
+- **`races`**
+  - Counts copies started, including racers started on an already-finished group (S6b) or killed by E27.
+  - This is fine as a count of starts. Add the counts of racers stopped and racers stolen to make it interpretable.
+- **`racer_wins`**
+  - Computed as `started > grp["first"] + 1e-6`, which compares two separate `time.time()` reads.
+  - It is correct here, because `time.time()` uses `GetSystemTimePreciseAsFileTime` at 1e-7 s resolution on this machine (Python 3.13). With a coarse clock and `race_after≈0`, a racer could compare equal.
+  - It counts a "later copy" win even when the original had been stolen, which is probably intended.
+  - Fix: record racers explicitly, e.g. a `racers: set` of futures, and use `racer_wins += fut in racers`.
+- **`steals`**
+  - Incremented only when the group's *last* member returns `stolen`. E27 steals of non-last members are not counted (S4: 2 kills, `steals: 1`).
+  - Count steals at flag time (victims) and outcomes per member.
+- **`census`**
+  - Includes ignored copies, which have status `stolen` and a partial bound, so "worst bounds" can list subtrees that were already closed.
+  - Tag them (`status + "/ignored"`) or skip them.
+- **Utilization**
+  - Stopped copies count as busy, which is correct (the process is busy). The E27 audit's caveats (§2.7) still apply.
+- **Docstring**
+  - It says "whose first copy has run at least `race_after`". The code uses the oldest *still-running* member, so after the original is stolen the clock restarts at the oldest racer.
+  - Either reading is defensible. Make the two agree.
+
+## 5.8 Other risks (question 6) [I]
+
+- **Racers inherit `cut` from the group.** A group dispatched before `cutoff_after` has `cut=False`, so its racers also run without a cutoff, even when `cutoff_after` has passed. That is a performance choice, not a correctness one (§5.3 holds for any cutoffs). Consider `leaf_cutoff or (cutoff_after is not None and now - t0 >= cutoff_after)` for racers.
+- **Racer start rate.**
+  - One racer per master iteration, and an iteration can block in `wait` for 0.5 s.
+  - In the harness, racers started about 0.5 s after becoming eligible (S1: original at 0.06 s, racer at 0.57 s with `race_after=0.2`).
+  - Filling k idle workers takes up to k × 0.5 s. Loop the racing block while slots, idle workers and candidates remain.
+- **What racing buys.**
+  - Every copy repeats the subtree's root work: presolve, root LP and cuts.
+  - It pays only if seed-to-seed variability in the subtree's solve time is large compared with that cost.
+  - **[M] Measured spread.** The 6 ramp-up leaves of `P100_growth_penalised`, L = 18, were each solved to the end with seeds 0–3. This was single-threaded and sequential, while a benchmark campaign was loading the machine, so the timings are noisy.
+    - HiGHS `random_seed` does change the search: node counts differ by up to 4.2x on a leaf.
+    - Per leaf, slowest/fastest seed time was 1.1x–1.9x.
+    - Seed 0 versus the best of 4 seeds: 1.0x–1.8x, geometric mean 1.31x (1.18x for the best of 2).
+    - The slowest leaf (about 30–39 s) was already fastest with seed 0, so racing every leaf would cut the critical path from 32.1 s to 29.8 s (−7%), with 2 copies or with 4.
+  - So on this model, racing helps a leaf by about 24% on average when there are idle workers to spare. The run's critical path improves far less. Two copies get most of the gain.
+  - The literature (§5.9) agrees: the gain from multiple seeds or bases is real but modest, and saturates after K = 2 in CPLEX's root cut-loop racing.
+- **Pre-existing, outside E28 [unverified].**
+  - `_highs` sets `mip_abs_gap = 1e-6` in *solver* (scaled) units, and `_solve_leaf` closes `Optimal` leaves at max(dual, obj).
+  - If auto-scaling makes 1e-6 solver units larger than `rel_gap · |obj|` in user units, a leaf is closed at a bound up to that much above what HiGHS proved.
+  - Not checked here; worth a one-line check against `MipBuilder.auto_scale`.
+
+## 5.9 Literature on racing in parallel MIP [L]
+
+- **UG/ParaSCIP racing ramp-up.** Shinano et al., "Solving open MIP instances with ParaSCIP on supercomputers using up to 80,000 cores", IPDPS 2016, https://doi.org/10.1109/IPDPS.2016.56. ZIB-Report 15-53: https://opus4.kobv.de/opus4-zib/files/5640/ZR-15-53-rev.pdf. Full text read for this section.
+  - Every solver starts on the root, with different parameter settings and permutations of variables and constraints, so that the search trees differ.
+  - After a set time, a winner is chosen by a combination of its lower bound and its number of open nodes. Its open nodes are collected and redistributed, and the other trees are discarded. **Only their feasible solutions are kept.**
+  - The benefit: all solvers start at once, with no load balancing needed early on. Racing statistics can also seed the branching information ("deep probing").
+  - The paper likens the commercial solvers' concurrent mode to running only ParaSCIP's racing stage. In ParaSCIP, when the racing stage ends is a run-time parameter.
+- **Koch, Ralphs & Shinano (2012)** (§1.1). By 2012, racing ramp-up had not yet made up for the throughput it loses. **Carvajal et al. (2014)** report that racing ramp-up "has not proven to be very effective" (citing ParaSCIP).
+- **Shinano et al. (2014)**, IPDPSW (§1.2). Racing can end without waiting for every solver. If the winner has too few nodes, it falls back to normal ramp-up.
+- **Carvajal, Ahmed, Nemhauser, Furman, Goel & Shao (2014)**, "Using diversification, communication and parallelism to solve mixed-integer linear programs", *Operations Research Letters* 42(2):186–189. https://doi.org/10.1016/j.orl.2013.12.012. Preprint: https://optimization-online.org/2013/05/3900/. Full text read.
+  - Several CPLEX configurations solve the same MILP in parallel.
+  - "Light communication" records the best lower and upper bounds over all configurations. This is E28's bound rule, and it means one configuration can supply the solution and another the bound.
+  - Sharing solutions and fathomed paths helped most. Sharing cuts helped least.
+  - Sharing lower bounds through objective cuts was worse, because of dual degeneracy. E28 shares bounds only in the master, not as cuts, so this does not apply.
+- **Fischetti & Monaci (2014)**, "Exploiting erraticism in search", *Operations Research* 62(1):114–122. https://doi.org/10.1287/opre.2013.1231. Abstract only.
+  - Erraticism is presented as an unavoidable "chaotic amplifier" effect of exponential tree search, to be exploited rather than avoided.
+  - Method, "bet-and-run": several short randomized runs, then the most promising one is run to completion.
+  - E28 is a run-them-all variant applied at a leaf. It never picks a winner early.
+- **Fischetti, Lodi, Monaci, Salvagnin & Tramontani (2016)**, "Improving branch-and-cut performance by random sampling", *Math. Prog. Computation* 8(1):113–132. https://doi.org/10.1007/s12532-015-0096-0. Full text read.
+  - Variability from the choice among degenerate optimal LP bases. K root cut loops from different bases pool their cuts and solutions into a final run.
+  - Adopted in CPLEX 12.5.1 with K = 2 concurrent cut loops: about 1–4% faster on its test set.
+  - **K > 2 degraded performance**, because overhead grows with K while diversification saturates. This suggests that E28's default `max_racers = 4` is high.
+  - The paper notes that similar ideas drive ParaSCIP's racing ramp-up.
+- **Fischetti, Monaci & Salvagnin (2018)**, "SelfSplit parallelization for mixed-integer linear programming", *Computers & OR* 93:101–112. https://doi.org/10.1016/j.cor.2018.01.011. Preprint: https://www.dei.unipd.it/~salvagni/pdf/selfsplit2.pdf. Full text read.
+  - Performance variability, modelled as heavy-tailed (Pareto) subproblem times, is what limits the scalability of static splitting.
+  - Reducing variability can be worth it in a distributed setting "even if" it costs sequential performance.
+  - This is the case *for* E28: when one leaf's solve time is heavy-tailed, the minimum over k independent copies trims the tail. It helps exactly at ramp-down, where one straggler holds the bound.
+- **Lodi & Tramontani (2013)**, "Performance variability in mixed-integer programming", *INFORMS TutORials in OR*, pp. 1–12. https://doi.org/10.1287/educ.2013.0112. Abstract only. Variability from platform changes, row and column permutations and other "neutral" changes. Benchmarks must use several seeds.
+
+**What this implies for E28.**
+
+- Keep the losers' *solutions*, as UG does. E28 already gets these through `_offer`.
+- Use few copies: K = 2 was CPLEX's sweet spot.
+- Race only where the variability pays: the straggler that holds the global bound. That is E28's weakest-group rule.
+- Stop racing as soon as partition work exists (UG's switch to normal ramp-up), which is B4's fix.
+
+## 5.10 Bugs and fixes (proposed only; `src/` not edited)
+
+**B1: a member's exception kills the run, even when its result is irrelevant.** Move the group lookup before `fut.result()` and tolerate a failure the group can absorb:
+
+```python
+for fut in done:
+    b, splits, sl, sliced, slot, started, g = running.pop(fut)
+    if slot >= 0:
+        live[slot] = -np.inf
+        free_slots.append(slot)
+        stealing.discard(slot)
+    grp = groups[g]
+    grp["members"].discard(fut)
+    try:
+        r = fut.result()
+    except Exception as exc:
+        if grp["closed"] or grp["members"]:  # subtree already proven, or still covered by another copy
+            log.append(f"leaf copy failed and was dropped: {type(exc).__name__}: {exc}")
+            if not grp["members"]:
+                del groups[g]
+            continue
+        raise  # the only copy of an open subtree: as before E28
+    census.append(...)
+    trace.extend(r["found"])
+    if grp["closed"]:
+        ...  # unchanged from here, minus the old `grp = groups[g]; grp["members"].discard(fut)`
+```
+
+**B2: waiting for ignored copies.** End the loop when only stopped copies remain, and stop late incumbent writes:
+
+```python
+def tree_open() -> bool:
+    return bool(heap) or any(not groups[rv[6]]["closed"] for rv in running.values())
+
+while tree_open():
+    ...
+with lock:
+    stop.value = 1  # under the lock, so no _offer lands between this and _finish's read
+
+# _offer (worker side):
+with _W["lock"]:
+    if obj < _W["best_val"].value and not _W["stop"].value:
+        ...
+```
+
+- Without the `stop` guard, a leftover copy could write `best_starts` while `_finish` reads it. Its flag is already set and `pool.shutdown(wait=False, cancel_futures=True)` is unchanged, so leftover copies exit at their next callback.
+- LNS tasks already end on `stop`. An improvement they find after the tree is proven lies within the gap, so dropping it is harmless.
+- Alternative if the early exit is unwelcome: keep the loop and log the seconds spent waiting on closed groups, to measure B2 first.
+
+**B3: E27 and E28 work against each other.** Steal only single-copy, open groups. Do not race a group with a pending steal:
+
+```python
+cands = [(max(rv[0], live[rv[4]]), rv[4]) for rv in running.values()
+         if rv[4] >= 0 and rv[2] != np.inf and now - rv[5] >= steal_after
+         and not groups[rv[6]]["closed"] and len(groups[rv[6]]["members"]) == 1]
+...
+# racing candidates:
+if (grp["closed"] or grp["copies"] >= max_racers or grp["deadline"] - now < 1.0
+        or any(f.done() or running[f][4] in stealing for f in grp["members"])):
+    continue
+```
+
+**B4: racers yield to queued work** (needed only with slicing or E27). Keep a set of racer futures, `racers`, filled at racer dispatch and discarded on completion, plus a set `yielding`. Before the dispatch loop:
+
+```python
+if heap and len(running) >= workers - len(lns):  # queued partition work, no free worker: stop the youngest racer
+    extra = [(running[f][5], f) for f in racers - yielding
+             if not groups[running[f][6]]["closed"] and len(groups[running[f][6]]["members"]) > 1]
+    if extra:
+        f = max(extra)[1]
+        steal[running[f][4]] = 1
+        yielding.add(f)
+```
+
+- This is sound by §5.4. A yielded racer ends open. If by then it is its group's last member, the normal `stolen` re-split path covers the subtree.
+
+**B5: accounting.**
+
+- `racer_wins += fut in racers`.
+- Count E27 steals at flag time.
+- Tag ignored copies in `census`.
+- Make the docstring describe the "oldest running copy" rule.
+- Optionally loop the racing block, so all idle workers fill in one iteration.
+
+**Regression tests (no pool needed).** The harness pattern of §5.1 works as a unit test: monkeypatch `P.ProcessPoolExecutor` with a thread-pool wrapper and `P._solve_leaf` with a scripted function, then assert on `closed` (captured by wrapping `P._finish`) and on the log. Suggested tests:
+
+- S1: exactly one closed entry per group, and `racer_wins == 1`.
+- S3: `re-splits: 1`.
+- S5: no exception after the B1 fix.
+- S2: wall time under 1.5 s after the B2 fix.
+
+They run in a few seconds with no processes. The existing end-to-end `test_racing_happens_and_the_proven_optimum_is_unchanged` uses 6 processes and cannot hit S2 or S5 deterministically.
+
+## 5.11 Invariants checklist for E28
+
+| Invariant | Verdict | Evidence |
+|---|---|---|
+| I1 global bound validity, with the per-group max over live copies | **PASS** | §5.3 [I, M, L] |
+| I1′ group bound = max over copies with different cutoffs | **PASS** (valid as min(·, best), which is how every consumer uses it) | §5.3 [I, M] |
+| I2 conservation: each group closed, re-split, or closed at its bound exactly once | **PASS** | §5.4 [I, M: S1–S6b] |
+| I3 no premature closing: a group closes only on a whole-subtree proof, and open copies never close a group while others run | **PASS** | §5.4 [I, M: S3, S4] |
+| I4 termination | **PASS** (`groups` cannot block the loop) | §5.6 [I] |
+| I4′ prompt termination | **FAIL (B2)**: the run waits for copies whose results it ignores | §5.6 [M: S2] |
+| I5 incumbent/cutoff consistency, including ignored copies' incumbents | **PASS** (`_offer` plus `found` traced before the closed check) | §5.3, §5.4 [I] |
+| I6 liveness of queued work | **PASS** with racing alone. **FAIL (B4)** with slicing or E27: racers are never pre-empted | §5.6 [I] |
+| Robustness: an irrelevant copy cannot crash the run | **FAIL (B1)** | §5.4 [M: S5] |
+| Slot and flag hygiene, `free_slots` | **PASS** | §5.5 [I] |
+| E27 interplay | **PASS** for soundness. **Inefficient (B3)**: E27 kills raced copies and can pick dead ones | §5.4, §5.5 [M: S4] |
+| Global time limit honoured | **PASS** (racers stay within the group deadline; at least 1 s left to start) | §5.6 [I] |
+| Counters `races` / `racer_wins` / `steals` | **Partly**: `steals` undercounts, `census` includes ignored copies (B5) | §5.7 [I, M: S4] |
+
+## 5.12 Summary
+
+- **Soundness.** No bug. The max over copies' bounds is valid despite different per-copy cutoffs: z\* ≥ min(max β_i, best). Each group closes or re-splits exactly once in every interaction tried. `bound_now`'s per-group live max is valid. With `race_after=None` the behaviour is identical to E27.
+- **Bugs to fix before an E28 timing campaign:**
+  - **B2:** the run waits for ignored copies, measured at +2.2 s in a 3 s scenario. Fix: end the loop when only closed groups run, and guard `_offer` with `stop`.
+  - **B1:** a stopped copy's exception kills the run. Fix: absorb the exception when the group is closed or still covered.
+- **Before combining racing with E27 or slicing:**
+  - **B3:** E27 must skip multi-copy and closed groups, and racing must skip groups being stolen.
+  - **B4:** racers must yield to queued work.
+- **Cosmetic (B5):** the counters and the docstring.
+- **Tuning from the literature and measurement.**
+  - Racing pays through variability and saturates quickly (CPLEX: K = 2).
+  - Here, the best of 4 seeds was 1.31x faster per leaf than seed 0 (geometric mean), and the best of 2 was 1.18x faster. The critical path improved by only 7%.
+  - So try `max_racers=2`. Racers should start for all idle workers at once rather than one per 0.5 s.

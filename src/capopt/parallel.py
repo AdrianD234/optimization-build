@@ -279,6 +279,8 @@ def _sb_task(splits: list[Split], p: int, s: int) -> tuple[Node | None, Node | N
 
 def _offer(starts: np.ndarray, obj: float) -> None:
     with _W["lock"]:
+        if _W["stop"].value:  # the master has finished: copies still winding down must not change the result
+            return
         if obj < _W["best_val"].value:
             _W["best_val"].value = obj
             _W["best_starts"][:] = [int(s) for s in starts]
@@ -502,8 +504,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         workers get its subtrees instead of waiting for a slice to expire. None = off. The log reports tree
         utilization either way.
     race_after (E28): racing. When nothing is queued, an incumbent exists and a tree worker is idle, start one more
-        copy (another seed, same splits and deadline) of the open leaf group with the weakest bound whose first copy
-        has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
+        copy (another seed, same splits and deadline) of the open leaf group with the weakest bound whose oldest
+        running copy has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
         (optimal, pruned, infeasible) closes it and the others are stopped; a group ending open is re-split or closed
         only when its last copy ends, with the best bound any copy reached. None = off.
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
@@ -619,7 +621,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         steals = 0
         groups: dict[int, dict] = {}  # E28: leaf group -> copies running, best bound so far, deadline, closed
         races = racer_wins = 0
-        while heap or running:
+        racers: set = set()
+        while heap or any(not groups[rv[6]]["closed"] for rv in running.values()):
             for f in [f for f in lns if f.done()]:
                 lns.remove(f)
                 trace.extend(f.result()["found"])
@@ -640,7 +643,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k + 7919 * seed, t0, cut, slot, b)
                 running[fut] = (b, splits, sl, sl is not None and tl < remaining, slot, time.time(), k)
                 groups[k] = {"members": {fut}, "bound": b, "deadline": time.time() + max(0.5, tl), "closed": False,
-                             "copies": 1, "cut": cut, "first": time.time()}
+                             "copies": 1, "cut": cut}
             tree_workers = workers - len(lns)
             if (steal_after is not None and not heap and running and not stealing and best_val.value < np.inf
                     and len(running) <= tree_workers // 2):  # E27: idle workers and nothing queued: take a leaf back
@@ -652,6 +655,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     victim = min(cands)[1]
                     steal[victim] = 1
                     stealing.add(victim)
+                    steals += 1
             if (race_after is not None and not heap and best_val.value < np.inf and free_slots
                     and len(running) < tree_workers):  # E28: an idle tree worker races the weakest open group
                 now = time.time()
@@ -677,6 +681,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     grp["members"].add(fut)
                     grp["copies"] += 1
                     races += 1
+                    racers.add(fut)
             done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
             done = {f for f in done if f in running}
             now = time.time()
@@ -710,20 +715,28 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                     live[slot] = -np.inf
                     free_slots.append(slot)
                     stealing.discard(slot)
-                r = fut.result()
-                census.append((r["bound"], time.time() - started, r.get("nodes", 0), r["status"], len(splits)))
-                trace.extend(r["found"])
                 grp = groups[g]
                 grp["members"].discard(fut)
+                try:
+                    r = fut.result()
+                except Exception:
+                    if grp["closed"] or grp["members"]:  # E28 audit B1: another copy covers this subtree
+                        if grp["closed"] and not grp["members"]:
+                            del groups[g]
+                        continue
+                    raise
+                trace.extend(r["found"])
                 if grp["closed"]:  # another copy already finished this subtree: this one was stopped
+                    census.append((r["bound"], time.time() - started, r.get("nodes", 0), "ignored", len(splits)))
                     if not grp["members"]:
                         del groups[g]
                     continue
+                census.append((r["bound"], time.time() - started, r.get("nodes", 0), r["status"], len(splits)))
                 grp["bound"] = max(grp["bound"], r["bound"])
                 if r["status"] in ("Optimal", "pruned", "empty", "Infeasible"):  # the subtree is finished
                     closed.append(max(r["bound"], grp["bound"]))
                     grp["closed"] = True
-                    racer_wins += started > grp["first"] + 1e-6  # a later copy, not the first, finished it
+                    racer_wins += fut in racers  # a racing copy, not the original, finished it
                     for f in grp["members"]:  # stop the other copies (their results are ignored)
                         if running[f][4] >= 0:
                             steal[running[f][4]] = 1
@@ -735,7 +748,6 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 del groups[g]
                 r = dict(r, bound=grp["bound"])  # the best bound any copy proved for this subtree
                 stolen = r["status"] == "stolen"
-                steals += stolen
                 # an unexpected interrupt is reopened too: only finished, pruned or globally timed-out leaves close
                 reopen = stolen or r["status"] == "Interrupted by user"
                 if (r["status"] == "Time limit reached" and sliced) or reopen:

@@ -120,7 +120,7 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | BRANCHING_AND_TREE E3 | Strong-branching ramp-up | ✅ | E11, E12, E22, E23 |
 | BRANCHING_AND_TREE E4 | **Hedged re-split: the parent keeps running while its children use idle workers** (ranked the largest expected wall-clock gain) | ❌ | E27 killed the parent (slower, as the literature predicts); E28 races copies (neutral) |
 | BRANCHING_AND_TREE E5 | Proof-phase leaf settings (heuristic effort, pseudocost reliability) | ❌ | queued |
-| BRANCHING_AND_TREE E6 | Endgame racing | ◐ | E28: seeds only (not `threads=k` or encoding variants) |
+| BRANCHING_AND_TREE E6 | Endgame racing | ◐ | E28: correct (audited), 0-15% gain, off; `threads=k` and encoding variants untried |
 | BRANCHING_AND_TREE E7 | General disjunctions | ✖ | gap anatomy: variable splits dominate |
 | BRANCHING_AND_TREE E8 | Leaf difficulty census and scheduling | ◐ | census logged, not used for scheduling |
 | BRANCHING_AND_TREE fork | Dynamic in-solve cutoff (HiGHS change) | ❌ | Q10 |

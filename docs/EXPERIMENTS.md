@@ -391,3 +391,26 @@ From 2026-10-16, an external sampler logs the machine's CPU load outside capopt 
 * **Instances**: `capopt holdout` writes `synthetic.perturb(name, seed)` for seeds 1-3 of each pack instance (each project's spend and PV scaled by independent factors in [0.9, 1.1]) to `benchmarks/holdout/` (12 files). Lmin stays 18 on all of them.
 * **Protocol**: `capopt bench --holdout --configs <cfg> --instances <inst> --time-limit 900`, one run per command and one log per run, instance-major so that a slow period of the machine hits every config, with the machine otherwise idle. Results go to `benchmarks/results/holdout/<config>/`. `capopt report` adds a holdout section in which every time-to metric targets the instance's best proven objective across configs.
 * **Status**: tooling done and smoke-tested (I9 proved two of the instances, in 0.6 s and 13.5 s, both referee-feasible). The 48 runs are **on hold** while the machine is kept free for solves on real Capital Programme Optimiser data. No verdict yet; the default is unchanged.
+
+### E28: racing copies of the weakest open leaf (opt-in, stays off)
+
+* With `race_after`: when nothing is queued, an incumbent exists and a tree worker is idle, the master starts another copy (different seed, same splits and deadline) of the open leaf group with the weakest bound. Up to `max_racers` copies run per group. The first copy to finish the subtree (optimal, pruned, infeasible) closes it and the others are stopped. A group ending open is re-split or closed only after its last copy ends, with the best bound any copy reached. Nothing is interrupted while its subtree is still open (the lesson of E27).
+* **Pack** (6 workers, racing after 2 s; all runs proved the known optimum):
+
+| Instance | No racing | Racing |
+|---|---|---|
+| P100_growth_penalised | 5.5 s, 34% utilization | 5.7 s, 54% utilization, 3 races |
+| P100_raw_penalised | 110.4 s, 37% | 106.7 s, 99%, 6 races (1 won by a later copy) |
+
+* **CPO** (racing after 10 s; load-tagged):
+
+| Run | Baseline | Racing | Load tag |
+|---|---|---|---|
+| s2000_P50 proof-only (E25 setup) | 354 s (E25, untagged) | 483 s, 76 races (5 won) | **contended** (outside load 2.7 cores mean, 5.3 peak) |
+| cfadsds_P95 (KPI pass 4 setup) | 586-658 s (E22, KPI pass 4) | 564 s, 32 races (1 won) | clean (0.98 mean) |
+
+* **Audit** (`docs/research/PARALLEL_BB_LOAD_BALANCING.md` §5): sound. The bound is valid across copies with different cutoffs; no subtree is lost or closed twice; termination and the time limit hold. Four robustness issues were found:
+  * Fixed: B1, an ignored copy's exception crashed the run. B2, the run waited for copies whose results it ignores; it now loops only while work is queued or an open group is running, and workers stop writing incumbents once the master stops. B5, accounting.
+  * Documented as prerequisites for ever combining racing with stealing or slicing: B3 (stealing and racing working against each other) and B4 (racers giving way to queued work).
+* **Verdict**: correct, with a gain of 0-15%, inside seed noise. The audit measured the same thing directly on HiGHS: seeds change node counts up to 4.2x on a leaf, the best of 4 seeds is 1.3x faster, but the run's critical path improves only 7%. That matches the literature: racing ramp-up has not proven effective in ParaSCIP (Koch et al. 2012, Carvajal et al. 2014). Using all cores may also cost the bound-holding leaves their single-core boost clock. Racing stays opt-in and off. The remaining tail lever is BRANCHING_AND_TREE E4 (hedged re-split: the parent keeps running while its children use the idle workers).
+* Side check from the audit: HiGHS's `mip_abs_gap=1e-6` is in scaled solver units. After auto-scaling it is at most 2e-6 objective units on the CPO models (about 0.01 on the no-penalty pack), against a 1e-5 relative tolerance of about 1e6 units, so it cannot close a leaf early.
