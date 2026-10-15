@@ -211,3 +211,12 @@ def test_warm_start_from_a_solution_file(tmp_path):
     r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, warm_start=str(sol))
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
     assert any(line.startswith("warm start: objective") for line in r.log)
+
+
+def test_lns_patience_hands_workers_back_and_still_proves(tmp_path):
+    raw = S.tiny(6, 9, 100, 19, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=2, lns_seconds=30, lns_patience=0.5)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    assert r.seconds < 30

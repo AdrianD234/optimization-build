@@ -331,12 +331,14 @@ def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
     return out
 
 
-def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big: bool = False) -> dict:
+def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big: bool = False,
+              patience: float | None = None) -> dict:
     """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
     rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes.
     big (E13): add a big-project neighbourhood. Free 1-3 of the largest projects (top 10% by spend) plus a random
     set of others, with a 3x longer sub-MIP limit. The gap anatomy study found the optimum moves a few big, long
-    projects by 1-19 years, which the window and hot-spot neighbourhoods rarely allow."""
+    projects by 1-19 years, which the window and hot-spot neighbourhoods rarely allow.
+    patience (E18): return to the tree once the shared incumbent has not improved for this many seconds."""
     _load_cuts()
     model: Model = _W["model"]
     inst = model.inst
@@ -346,7 +348,12 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
     found, tries, wins = [], 0, 0
     big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
     base_kinds = 4 if inst.penalised else 3
+    last_val, last_t = _W["best_val"].value, time.time()
     while time.time() < deadline and not _W["stop"].value:
+        if _W["best_val"].value < last_val:
+            last_val, last_t = _W["best_val"].value, time.time()
+        elif patience is not None and time.time() - last_t > patience:
+            break
         if _W["best_val"].value == np.inf:
             time.sleep(0.2)
             continue
@@ -436,7 +443,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
                    leaf_cutoff: bool = True, rel_gap: float = 1e-9, seed: int = 0,
                    cutoff_after: float | None = None, sb_candidates: int = 0, lns_big: bool = False,
-                   lns_after_rampup: bool = False) -> ParallelResult:
+                   lns_after_rampup: bool = False, lns_patience: float | None = None) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -457,6 +464,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_big (E13): LNS also uses the big-project neighbourhood (see _lns_task).
     lns_after_rampup (E15): submit the LNS workers only after the ramp-up, so strong branching has the whole pool (useful
         with a good warm start, when early LNS matters less).
+    lns_patience (E18): an LNS worker joins the tree once the incumbent has not improved for this many seconds.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
     leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
@@ -520,7 +528,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
         def start_lns() -> list:
-            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big)
+            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience)
                     for i in range(lns_workers)]
         lns = [] if lns_after_rampup else start_lns()
         if cut_rounds:
