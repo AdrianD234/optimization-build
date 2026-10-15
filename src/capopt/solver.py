@@ -53,10 +53,12 @@ def lp_bound(inst: I.Instance, L: int) -> float:
     return m.user(h.getInfo().objective_function_value)
 
 
-def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = None,
+def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = 60,
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
-          lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
-          leaf_cutoff: bool = True) -> Result:
+          lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
+          leaf_cutoff: bool = False) -> Result:
+    """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
+    See docs/EXPERIMENTS.md for why each default was chosen."""
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []

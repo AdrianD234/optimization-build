@@ -13,7 +13,23 @@ capopt is an open-source optimiser for the capital-programme scheduling MILP in 
 1. **Fixed-last-year decomposition.** The only awkward coupling in the reference MIP is the endogenous last build year. Fixing it at L removes every activity binary and big-M row. On the penalised instances the model drops from 6.3k columns × 18.3k rows to 1.7k × 137. OPT = min over L of MIP(L) (the proof is in `formulation.py` and is property-tested).
 2. **LP pruning of last years.** L >= 18 because cumulative funding must cover total spend. For L >= 19, the LP bounds sit at least 66% above the optimum, so one MIP (L = 18) decides the instance.
 3. **Step encoding.** "Project p has started by year s" variables give balanced branching, which HiGHS cannot get from the reference encoding because it has no SOS branching.
-4. **Parallel split-and-solve.** HiGHS' tree search is sequential. capopt splits the model into subtrees chosen best-first from LP bounds and solves them in 20 worker processes. The workers share an incumbent, which serves as a cutoff and as an early-stop signal. Time-sliced re-splitting is optional.
+4. **Parallel split-and-solve.** HiGHS' tree search is sequential. capopt splits the model into subtrees chosen best-first from LP bounds and solves them in 20 worker processes. The workers share an incumbent, which stops a subtree as soon as its bound reaches it.
+5. **Overlapping start-up.** While the worker pool spawns, the master tries a direct solve for 1.5 s, which finishes the easy instances before the pool is up.
+
+## Results (this machine, capopt default vs MindOpt cold)
+
+| Instance | Proof of optimality | Within 0.1% |
+|---|---|---|
+| P100_raw_penalised | **86 s** vs 232 s | 4.2 s vs 32 s |
+| P100_growth_penalised | **7.4 s** vs 179 s | 0.9 s vs 105 s |
+| P100_raw_nopenalty | **74 s** vs not proven in 900 s; new optimum, 5.2e-6 better than the pack's best-known | 1.2 s vs 28 s |
+| P100_growth_nopenalty | **0.74 s** vs 132 s | 0.3 s vs 10 s |
+
+The full ladder (baseline B0, then I1-I10) is in [benchmarks/BENCHMARK.md](benchmarks/BENCHMARK.md). The QA scorecard and known gaps are in [docs/QA.md](docs/QA.md).
+
+## MindOpt
+
+MindOpt's floating licence allows one solve at a time. `capopt bench --configs mindopt_cold` re-runs MindOpt live under a machine-wide lock: solves queue across processes, the licence is probed with backoff, a solve is never killed, and the run is skipped cleanly when MindOpt or the licence is missing. See `src/capopt/mindopt_runner.py`.
 
 ## Quick start
 

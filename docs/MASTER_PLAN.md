@@ -47,10 +47,28 @@ Each phase is a numbered experiment with a hypothesis, a fixed protocol and a re
 * `docs/research/MILP_FRONTIER.md`: 41 papers with 15 ranked, testable ideas, plus calibration (Mittelmann, Oct 2026: HiGHS about 5x slower than the best commercial solver on MIPLIB, so the gains must come from structure and parallelism).
 * `docs/research/AI_MATH_RESULTS.md`: OpenAI and DeepMind AI-for-maths releases (IMO gold, ErdÅ‘s results, the `openai/math` manuscripts, AlphaEvolve, FunSearch). The verdict is that no theorem in them speeds up this MILP. The transferable part is the *method*: an LLM proposes code and an exact scorer judges it. That becomes Phase 6.
 
+## 3b. Status (2026-10-15)
+
+| Phase | Status |
+|---|---|
+| 0 Foundations | **Done.** Evaluator parity, formulations, numba kernel, synthetic generator, test suite (115 tests), CI on Ubuntu and Windows × Python 3.11/3.13 |
+| 1 Baseline | **Done.** B0 (stock HiGHS on the reference model) on all four instances; it hit the raw_nopenalty time-limit hang, which the watchdog handled |
+| 2 Formulation ladder | **Done.** I1/I2 single-thread runs prove all four instances, including raw_nopenalty (never proven by MindOpt), with a new optimum |
+| 3 Parallel and primal | **In progress.** I3 split-and-solve, I4 re-splitting, I5 LNS workers; 3 repeats each |
+| 4 Bound strengthening | **Started.** Cover cuts (I6); start-window tightening and lifting are next |
+| 5 Engine work | Not started. Nothing so far needs HiGHS internals |
+| 6 Evolve-a-heuristic | Designed (`docs/research/AI_MATH_RESULTS.md`), not started |
+
 ## 4. Benchmark protocol
 
 * **Instances**: the four in `benchmark_pack/instances/`, unchanged.
-* **Comparator**: MindOpt 2.3 cold, from `benchmark_pack/results/benchmark_results.json`. It was measured on this same machine (Intel family 6 model 198, 20 threads, Windows 11 build 26300). MindOpt is not installed here, so it is not re-run. Same hardware and OS make the comparison like-for-like, but MindOpt's run-to-run variance (noted in the pack) still applies.
+* **Comparator**: MindOpt 2.3 cold, from `benchmark_pack/results/benchmark_results.json`. It was measured on this same machine (Intel family 6 model 198, 20 threads, Windows 11 build 26300). Same hardware and OS make the comparison like-for-like, but MindOpt's run-to-run variance (noted in the pack) still applies. MindOpt is not installed on this machine yet. When it is, `capopt bench --configs mindopt_cold` re-runs it live (below), and the report shows the live rows next to the recorded one.
+* **MindOpt licence concurrency** (floating licence: one solve at a time), handled in `src/capopt/mindopt_runner.py`:
+  * every MindOpt solve holds a machine-wide OS file lock, so solves from any process queue instead of colliding (the OS releases the lock if the holder crashes);
+  * the licence is probed with exponential backoff before each solve;
+  * MindOpt stops through its own `MaxTime` and is never killed by the benchmark watchdog (a kill can lock the seat). If it overruns badly, the process is left running and the run is recorded as skipped;
+  * a missing `mindoptpy` or an unavailable licence gives a clean `skipped` record, and the report falls back to the recorded run;
+  * MindOpt runs never go inside capopt's worker pools; they run one at a time in their own process. Tested in `tests/test_mindopt_runner.py`.
 * **Metrics**: wall-clock seconds from process start to an incumbent within 1% / 0.1% / 1e-6 relative of best-known (the pack's definition), and to a proof (gap <= 1e-9 relative). Every incumbent in a trace is a schedule re-scored by our evaluator. The final schedule is also re-scored by the referee script itself.
 * **Repeats**: three seeds per configuration for headline numbers; report median and range.
 * **Outputs**: `benchmarks/results/<config>/<instance>.json` (trace, result, settings, machine) and `benchmarks/BENCHMARK.md` (generated).

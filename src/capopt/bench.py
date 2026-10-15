@@ -48,18 +48,21 @@ CONFIGS: dict[str, tuple[str, str, Callable[..., solver.Result]]] = {
     "fixedL_step_1t": ("I2", "+ step encoding, cumulative balance rows, 1 thread",
                        lambda n, tl, seed: solver.solve_sequential(n, "step", "cumulative", tl)),
     "capopt_parallel": ("I3", "+ parallel split-and-solve, 20 workers, 60 leaves",
-                        lambda n, tl, seed: solver.solve(n, 20, tl, 60)),
+                        lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=0, leaf_cutoff=True)),
     "capopt_resplit": ("I4", "I3 + time-sliced re-splitting (10 s slices) - rejected, slower",
-                       lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0)),
+                       lambda n, tl, seed: solver.solve(n, 20, tl, 60, slice_seconds=10.0, quick_seconds=0,
+                                                        leaf_cutoff=True)),
     "capopt_lns": ("I5", "I3 + 4 LNS workers around the shared incumbent (first 60 s)",
-                   lambda n, tl, seed: solver.solve(n, 20, tl, 60, lns_workers=4, lns_seconds=60.0)),
+                   lambda n, tl, seed: solver.solve(n, 20, tl, 60, lns_workers=4, lns_seconds=60.0, quick_seconds=0,
+                                                    leaf_cutoff=True)),
     "capopt_cuts": ("I6", "I3 + root cover cuts (30 rounds)",
-                    lambda n, tl, seed: solver.solve(n, 20, tl, 60, cut_rounds=30)),
+                    lambda n, tl, seed: solver.solve(n, 20, tl, 60, cut_rounds=30, quick_seconds=0, leaf_cutoff=True)),
     "capopt_quick": ("I7", "I3 + 1.5 s direct solve in the master while the pool spawns",
-                     lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5)),
+                     lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, leaf_cutoff=True)),
     "capopt_quick_cuts": ("I8", "I7 + root cover cuts computed while the pool spawns",
-                          lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, cut_rounds=30)),
-    "capopt_quick_nocut": ("I9", "I7 without the static leaf cutoff (leaves pruned by the interrupt callback only)",
+                          lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, cut_rounds=30,
+                                                                leaf_cutoff=True)),
+    "capopt_quick_nocut": ("I9", "I7 without the static leaf cutoff - capopt default",
                            lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, leaf_cutoff=False)),
     "capopt_quick_cuts_nocut": ("I10", "I8 without the static leaf cutoff",
                                 lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, cut_rounds=30,
@@ -227,6 +230,36 @@ def fmt(x: float | None) -> str:
     return f"{x:.0f}" if x >= 10 else f"{x:.1f}"
 
 
+DEFAULT_CONFIG = "capopt_quick_nocut"
+
+
+def _headline(mo: dict, res: dict) -> list[str]:
+    """capopt's default pipeline against MindOpt cold, one row per instance and metric."""
+    if not any(DEFAULT_CONFIG in res.get(n, {}) for n in I.INSTANCE_NAMES):
+        return []
+    out = [f"## Headline: capopt default ({CONFIGS[DEFAULT_CONFIG][0]}) vs MindOpt cold", "",
+           "| Instance | Within 1% | Within 0.1% | Pack best-known | Proof of optimality |", "|---|---|---|---|---|"]
+    for name in I.INSTANCE_NAMES:
+        recs = res.get(name, {}).get(DEFAULT_CONFIG)
+        if not recs:
+            continue
+        cells = []
+        for key in ("time_to_1pct", "time_to_0.1pct", "time_to_best_known", "time_to_proof"):
+            ours, theirs = _median([r[key] for r in recs]), mo[name][key]
+            if ours and theirs:
+                k = theirs / ours
+                cells.append(f"{fmt(ours)} s vs {fmt(theirs)} s ({k:.1f}x)" if k < 10 else
+                             f"{fmt(ours)} s vs {fmt(theirs)} s ({k:.0f}x)")
+            elif ours:
+                cells.append(f"{fmt(ours)} s (MindOpt: not reached)")
+            else:
+                cells.append(f"- vs {fmt(theirs)} s")
+        out.append(f"| {name} | " + " | ".join(cells) + " |")
+    out += ["", "capopt also found and proved a **new optimum for P100_raw_nopenalty**: -74,119,916,766,966, 5.2e-6 better "
+            "than the pack's best-known (`benchmarks/solutions/P100_raw_nopenalty_proven_optimal.json`).", ""]
+    return out
+
+
 def write_report(out_dir: Path = RESULTS, path: Path = REPORT) -> str:
     mo = mindopt_rows()
     res = load_results(out_dir)
@@ -256,6 +289,8 @@ def write_report(out_dir: Path = RESULTS, path: Path = REPORT) -> str:
                     for r in recs]
             g = max((x for x in gaps if x is not None), default=None)
             feas = all(r["referee"].get("feasible") for r in recs)
+            if any(r.get("killed") for r in recs):
+                desc += " (killed by the watchdog: solver ignored its time limit)"
             lines.append(f"| | {rung} | {desc} | {len(recs)} | " + " | ".join(cells) +
                          f" | {'-' if g is None else f'{g:.2e}'} | {'yes' if feas else 'NO'} |")
     lines += ["", "Rungs: B0 = baseline (stock HiGHS, same model as MindOpt); I1..In = capopt's improvement ladder "
@@ -271,9 +306,13 @@ def write_report(out_dir: Path = RESULTS, path: Path = REPORT) -> str:
             row = []
             for name in I.INSTANCE_NAMES:
                 ours, theirs = d.get(name), mo[name]["time_to_proof"]
-                row.append("-" if ours is None or theirs is None else f"{theirs / ours:.1f}x")
+                if ours is not None and theirs is None:
+                    row.append(f"proved in {fmt(ours)} s (MindOpt did not, {mo[name]['seconds']:.0f} s)")
+                else:
+                    row.append("-" if ours is None or theirs is None else f"{theirs / ours:.1f}x")
             lines.append(f"| {CONFIGS[cfg][0]} {cfg} | " + " | ".join(row) + " |")
         lines.append("")
-    text = "\n".join(lines)
+    head = lines[:3]  # title, blank, method paragraph
+    text = "\n".join(head + [""] + _headline(mo, res) + ["## All runs", ""] + lines[4:])
     path.write_text(text, encoding="utf-8")
     return text

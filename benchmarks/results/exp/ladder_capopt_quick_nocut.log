@@ -1,0 +1,8 @@
+[capopt_quick_nocut] P100_raw_penalised s0: obj -7.408929e+09 proven True 1% 4.25 0.1% 4.25 bk 74.29 proof 84.9 (84.9s)
+[capopt_quick_nocut] P100_raw_penalised s1: obj -7.408929e+09 proven True 1% 4.24 0.1% 4.24 bk 75.41 proof 86.2 (86.2s)
+[capopt_quick_nocut] P100_growth_penalised s0: obj -1.362491e+10 proven True 1% 0.87 0.1% 0.87 bk 4.18 proof 7.39 (7.39s)
+[capopt_quick_nocut] P100_growth_penalised s1: obj -1.362491e+10 proven True 1% 0.9 0.1% 0.9 bk 4.12 proof 7.34 (7.34s)
+[capopt_quick_nocut] P100_raw_nopenalty s0: obj -7.411992e+13 proven True 1% 0.37 0.1% 1.18 bk 17.55 proof 73.26 (73.26s)
+[capopt_quick_nocut] P100_raw_nopenalty s1: obj -7.411992e+13 proven True 1% 0.38 0.1% 1.2 bk 17.95 proof 74.83 (74.83s)
+[capopt_quick_nocut] P100_growth_nopenalty s0: obj -1.389382e+14 proven True 1% 0.26 0.1% 0.26 bk 0.48 proof 0.74 (0.74s)
+[capopt_quick_nocut] P100_growth_nopenalty s1: obj -1.389382e+14 proven True 1% 0.26 0.1% 0.26 bk 0.47 proof 0.73 (0.73s)
