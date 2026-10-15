@@ -59,6 +59,11 @@ CONFIGS: dict[str, tuple[str, str, Callable[..., solver.Result]]] = {
                      lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5)),
     "capopt_quick_cuts": ("I8", "I7 + root cover cuts computed while the pool spawns",
                           lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, cut_rounds=30)),
+    "capopt_quick_nocut": ("I9", "I7 without the static leaf cutoff (leaves pruned by the interrupt callback only)",
+                           lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, leaf_cutoff=False)),
+    "capopt_quick_cuts_nocut": ("I10", "I8 without the static leaf cutoff",
+                                lambda n, tl, seed: solver.solve(n, 20, tl, 60, quick_seconds=1.5, cut_rounds=30,
+                                                                 leaf_cutoff=False)),
     "mindopt_cold": ("M", "MindOpt cold, live re-run (one solve at a time under the licence lock)", None),
 }
 # Runs that must never be killed by the watchdog: killing MindOpt mid-solve can lock the floating-licence seat.

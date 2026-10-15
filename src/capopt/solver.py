@@ -55,7 +55,8 @@ def lp_bound(inst: I.Instance, L: int) -> float:
 
 def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = None,
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
-          lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0) -> Result:
+          lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
+          leaf_cutoff: bool = True) -> Result:
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -81,7 +82,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit - (time.time() - t0),
                            incumbent=best_starts, t0=t0, idle=idle, slice_seconds=slice_seconds,
                            lns_workers=lns_workers, lns_seconds=lns_seconds, cut_rounds=cut_rounds,
-                           quick_seconds=quick_seconds)
+                           quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

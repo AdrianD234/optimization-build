@@ -167,13 +167,14 @@ def _offer(starts: np.ndarray, obj: float) -> None:
             _W["best_starts"][:] = [int(s) for s in starts]
 
 
-def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float) -> dict:
+def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, leaf_cutoff: bool = True) -> dict:
     _load_cuts()
     model: Model = _W["model"]
     h = _highs(model, splits, False, time_limit, seed)
     if h is None:
         return {"status": "empty", "bound": np.inf, "found": []}
-    h.setOptionValue("objective_bound", model.solver_units(float(_W["best_val"].value)))
+    if leaf_cutoff:  # start the leaf with the shared incumbent as HiGHS' objective bound (exp05: can hurt)
+        h.setOptionValue("objective_bound", model.solver_units(float(_W["best_val"].value)))
     found = []
 
     def on_improve(e):
@@ -290,7 +291,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    balance: str = "cumulative", time_limit: float = 900.0, incumbent: np.ndarray | None = None,
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
                    slice_seconds: float | None = None, slice_growth: float = 1.5, lns_workers: int = 0,
-                   lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0) -> ParallelResult:
+                   lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 0.0,
+                   leaf_cutoff: bool = True) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -303,6 +305,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     quick_seconds: while the worker pool spawns, the master tries to solve the whole model directly for this long, so
         an easy instance is finished before the parallel machinery is even up.
     The pool starts spawning first; the quick try, the cut loop and the ramp-up all overlap process start-up.
+    leaf_cutoff: pass the shared incumbent to each leaf as HiGHS' `objective_bound`. Leaves are pruned by the interrupt
+        callback either way; exp05 found the static bound can steer HiGHS' search badly.
 
     idle: called with the current incumbent value whenever the master is waiting on workers (one small unit of work per
     call), e.g. LP-bounding the other last years."""
@@ -385,7 +389,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 if remaining <= 0:
                     closed.append(b); continue
                 tl = min(remaining, sl) if sl else remaining
-                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k, t0)
+                fut = pool.submit(_solve_leaf, splits, max(0.5, tl), k, t0, leaf_cutoff)
                 running[fut] = (b, splits, sl, sl is not None and tl < remaining)
             done, _ = wait(list(running) + lns, timeout=0.05 if idle else 0.5, return_when=FIRST_COMPLETED)
             done = {f for f in done if f in running}
