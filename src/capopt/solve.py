@@ -23,12 +23,14 @@ def sink(t: float, obj: float, starts) -> None:
             fh.write(json.dumps({"t": round(t, 3), "obj": obj, "starts": [int(x) for x in starts]}) + "\n")
 
 
-def sink_bound(t: float, bound: float) -> None:
-    """Append a proven dual bound to $CAPOPT_TRACE_FILE (if set), so watchers can show the live MIP gap."""
+def sink_bound(t: float, bound: float, L: int | None = None) -> None:
+    """Append a proven dual bound to $CAPOPT_TRACE_FILE (if set), so watchers can show the live MIP gap. `L` tags the
+    last build year the bound belongs to: with concurrent proofs, several last years write to the same file."""
     path = os.environ.get("CAPOPT_TRACE_FILE")
     if path and bound > -float("inf"):
+        rec = {"t": round(t, 3), "bound": bound} if L is None else {"t": round(t, 3), "bound": bound, "L": int(L)}
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"t": round(t, 3), "bound": bound}) + "\n")
+            fh.write(json.dumps(rec) + "\n")
 
 
 @dataclass

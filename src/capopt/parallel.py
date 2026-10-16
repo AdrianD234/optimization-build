@@ -733,7 +733,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             if bound_now > last_bound + 1e-12 * abs(bound_now):
                 last_bound = bound_now
                 bound_trace.append((time.time() - t0, bound_now))
-                sink_bound(bound_trace[-1][0], bound_now)
+                sink_bound(bound_trace[-1][0], bound_now, L)
             for fut in done:
                 b, splits, sl, sliced, slot, started, g = running.pop(fut)
                 if slot >= 0:
