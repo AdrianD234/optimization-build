@@ -194,11 +194,14 @@ def _sb_pick(node: Node, results, cutoff: float = np.inf) -> tuple[Node | None, 
 
 
 def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0,
-            pool=None, width: int = 1) -> tuple[list[Node], int]:
+            pool=None, width: int = 1, pruned_bounds: list[float] | None = None) -> tuple[list[Node], int]:
     """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned).
-    With strong branching on a pool, the `width` best open nodes are expanded together so the pool stays busy."""
-    if pool is not None and sb_candidates > 1 and width > 1:
-        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width)
+    With strong branching on a pool, the `width` best open nodes are expanded together so the pool stays busy.
+    pruned_bounds (E37): if given, the LP bounds of the pruned nodes are appended to it, so the caller can report the
+    real global bound (a node pruned at a coarse target gap can sit up to that gap below the incumbent)."""
+    if pool is not None and sb_candidates >= 1 and width > 1:  # E37: k = 1 (plain branching) batches on the pool too
+        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width, pruned_bounds)
+    pb = pruned_bounds if pruned_bounds is not None else []
     root = _lp_node(model, [])
     if root is None:
         return [], 0
@@ -209,6 +212,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
         node = heapq.heappop(heap)
         if node.bound >= cutoff:
             pruned += 1
+            pb.append(node.bound)
             continue
         if not node.frac:  # LP integral: nothing to split on; keep as a leaf
             done.append(node)
@@ -216,13 +220,17 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
         for child in _branch(model, node, sb_candidates, pool, cutoff):
             if child is None or child.bound >= cutoff:
                 pruned += 1
+                if child is not None:
+                    pb.append(child.bound)
                 continue
             heapq.heappush(heap, child)
     leaves = sorted(heap + done)
     return leaves, pruned
 
 
-def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, width: int) -> tuple[list[Node], int]:
+def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, width: int,
+                     pruned_bounds: list[float] | None = None) -> tuple[list[Node], int]:
+    pb = pruned_bounds if pruned_bounds is not None else []
     root = _lp_node(model, [])
     if root is None:
         return [], 0
@@ -235,6 +243,7 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
             node = heapq.heappop(heap)
             if node.bound >= cutoff:
                 pruned += 1
+                pb.append(node.bound)
             elif not node.frac:
                 done.append(node)
             else:
@@ -244,6 +253,8 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
             for child in _sb_pick(node, [f.result() for f in fl], cutoff):
                 if child is None or child.bound >= cutoff:
                     pruned += 1
+                    if child is not None:
+                        pb.append(child.bound)
                     continue
                 heapq.heappush(heap, child)
     return sorted(heap + done), pruned
@@ -344,11 +355,14 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
     best = _W["best_val"].value
     bound = model.user(info.mip_dual_bound)
     if status in ("Infeasible",) or (status != "Optimal" and bound >= best - _W["rel_gap"] * abs(best)):
-        bound = np.inf if status == "Infeasible" else max(bound, best)
+        # E37: a pruned subtree keeps its real dual bound (it used to be raised to the incumbent, which overstated the
+        # final bound by up to rel_gap: harmless at 1e-5, misleading at the presets' 1e-2)
+        bound = np.inf if status == "Infeasible" else bound
         status = "pruned"
     elif status == "Optimal":
         obj = model.user(info.objective_function_value)
-        bound = max(bound, obj) if obj < np.inf else bound
+        if not np.isfinite(bound):  # HiGHS reports the dual bound with the optimum; fall back to it only if missing
+            bound = obj
     elif steal is not None and steal[slot]:
         status = "stolen"  # an open subtree handed back to the master: it must be re-split, never closed
     bound = max(bound, start_bound)  # a subtree's bound never falls below the bound it started with
@@ -440,6 +454,11 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             continue
         h.setOptionValue("objective_bound", model.solver_units(float(cur_val)))
         h.setSolution(_vec_solution(model, cur))
+
+        def on_interrupt(e):  # E37: stop the sub-MIP as soon as the master is done (it used to finish first, up to 9 s)
+            if _W["stop"].value:
+                e.data_in.user_interrupt = True
+        h.cbMipInterrupt.subscribe(on_interrupt)
         ts = time.time()
         h.run()
         status = h.modelStatusToString(h.getModelStatus())
@@ -545,6 +564,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     t0 = time.time() if t0 is None else t0
     workers = workers or max(1, (os.cpu_count() or 2))
     n_leaves = n_leaves or 3 * workers
+    lns_workers = min(lns_workers, max(0, workers - 1))  # E37: always keep a tree worker (a preset on a small machine)
     inst = I.load(name)
     model = last_year_model(inst, L, encoding, balance)
     log: list[str] = []
@@ -596,12 +616,13 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             trace.extend((q0 + pt, v) for pt, v, _ in qt.points)
             log.append(f"quick try: {r.status} in {r.seconds:.2f}s")
             if r.status == "Optimal":
-                closed.append(best_val.value if r.dual_bound is None else max(r.dual_bound, best_val.value))
+                closed.append(best_val.value if r.dual_bound is None else r.dual_bound)
                 return _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, resplits, rel_gap)
         # LNS starts now, from the quick try's incumbent, while the master still builds cuts and the ramp-up tree
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
-        def start_lns() -> list:
-            return [pool.submit(_lns_task, lns_seconds, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns)
+        def start_lns() -> list:  # E37: LNS stops at the solve's time limit too
+            secs = max(0.0, min(lns_seconds, time_limit - (time.time() - t0)))
+            return [pool.submit(_lns_task, secs, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns)
                     for i in range(lns_workers)]
         if lns_first > 0 and best_val.value < np.inf:  # E24: every worker on LNS first, then the ramp-up
             burst = [pool.submit(_lns_task, lns_first, 5000 + i + 7919 * seed, t0, 3.0, lns_big, None, lns_alns)
@@ -627,7 +648,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             sb_candidates = 16 if n_frac > 15 else 4
             log.append(f"strong branching: {sb_candidates} candidates ({n_frac} fractional projects at the root)")
         width = max(1, -(-2 * free // max(1, sb_candidates)))  # E23: about 2x the free workers in tasks per round
-        leaves, pruned = ramp_up(model, n_leaves, best_val.value, sb_candidates, sb_pool, width)
+        # E37: prune at the target gap, not at the incumbent itself (nodes within rel_gap of it are closed anyway)
+        pruned_bounds: list[float] = []
+        leaves, pruned = ramp_up(model, n_leaves, tol(), sb_candidates, sb_pool, width, pruned_bounds)
+        if pruned_bounds:
+            closed.append(min(pruned_bounds))
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
         if lns_after_rampup:
             lns = start_lns()
@@ -656,7 +681,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             while heap and len(running) < workers - len(lns):
                 b, k, splits, sl = heapq.heappop(heap)
                 if b >= tol():
-                    closed.append(max(b, best_val.value)); continue
+                    closed.append(b); continue  # E37: the subtree's real bound (within rel_gap of the incumbent)
                 remaining = time_limit - (time.time() - t0)
                 if remaining <= 0:
                     closed.append(b); continue

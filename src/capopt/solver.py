@@ -11,6 +11,7 @@ No-penalty objective
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -68,6 +69,11 @@ class _LPTree:
                 heapq.heappush(self.heap, child)
 
 
+def _warm_starts(inst: I.Instance, starts: dict) -> np.ndarray:
+    """Start years from a plan's {id: year} map; projects the plan does not know start at their earliest option."""
+    return np.array([int(starts.get(pid, a[0])) for pid, a in zip(inst.ids, inst.allowed)], dtype=np.int64)
+
+
 def lp_bound(inst: I.Instance, L: int) -> float:
     """LP relaxation bound of MIP(L); +inf if no schedule can end by L."""
     try:
@@ -84,6 +90,75 @@ def lp_bound(inst: I.Instance, L: int) -> float:
     return m.user(h.getInfo().objective_function_value)
 
 
+def screen_last_years(inst: I.Instance, Ls: list[int], cutoff: float = np.inf, threads: int | None = None,
+                      log: list[str] | None = None) -> dict[int, float]:
+    """E37: a lower bound on MIP(L) for every L in Ls. The O(T) cash floor (bounds.cash_floor_bound) settles each L it
+    prunes at `cutoff`; the rest get their LP bound, solved in threads (HiGHS releases the GIL, so 12 LPs take about
+    0.5 s instead of 3.4 s)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .bounds import cash_floor_bound
+    t0 = time.time()
+    out = {L: cash_floor_bound(inst, L) for L in Ls}
+    need = [L for L in Ls if out[L] < cutoff]
+    if need:
+        new_highs(1)  # set the process-wide scheduler once, before threads create their own instances
+        with ThreadPoolExecutor(min(len(need), threads or os.cpu_count() or 1)) as ex:
+            for L, b in zip(need, ex.map(lambda L: lp_bound(inst, L), need)):
+                out[L] = max(out[L], b)
+    if log is not None:
+        log.append(f"screen: {len(Ls)} last years, {len(Ls) - len(need)} settled by the cash floor, {len(need)} LPs, "
+                   f"{time.time() - t0:.2f}s")
+    return out
+
+
+def repair_schedule(inst: I.Instance, starts: np.ndarray, time_limit: float = 10.0,
+                    log: list[str] | None = None) -> np.ndarray | None:
+    """E38: make a previous plan feasible for an edited instance, changing as little as possible. Starts that are no
+    longer allowed move to the nearest allowed year. If the balance still goes negative (spend went up), a sub-MIP
+    re-times only the projects that are active around the first negative year, plus the moved ones, with everything
+    else fixed; the window widens until the sub-MIP finds a schedule. None if that fails within the time limit."""
+    from .parallel import _fix_others, _highs
+    t0 = time.time()
+    st = np.array([int(a[np.argmin(np.abs(a - int(s)))]) for a, s in zip(inst.allowed, starts)], dtype=np.int64)
+    moved = st != np.asarray(starts)
+    if evaluate(inst, st)["feasible"]:
+        if log is not None and moved.any():
+            log.append(f"warm start repaired: {int(moved.sum())} starts moved to the nearest allowed year")
+        return st
+    spend = np.zeros(inst.T)
+    for p, s0 in enumerate(st):
+        sp = inst.spend[p][:max(0, inst.T - s0)]
+        spend[s0:s0 + len(sp)] += sp
+    net = np.cumsum(inst.F.astype(float) - spend)
+    bad = np.nonzero(net < 0)[0]
+    year = int(bad[0]) if len(bad) else int(st.max())
+    ends = st + inst.last_nz
+    L = max(inst.min_last_year(), int(ends.max()))
+    for r in (2, 4, 8, inst.T):
+        free = moved | ((st <= year + r) & (ends >= year - r))
+        model = last_year_model(inst, min(inst.T - 1, L + r), "step", "cumulative")
+        h = _highs(model, _fix_others(st, free), False, max(0.5, time_limit - (time.time() - t0)))
+        if h is None:
+            continue
+        h.setOptionValue("mip_rel_gap", 1e-2)
+        h.run()
+        sol = h.getSolution()
+        if sol.value_valid:
+            cand = model.starts_from_solution(np.asarray(sol.col_value))
+            if evaluate(inst, cand)["feasible"]:
+                if log is not None:
+                    log.append(f"warm start repaired: {int(free.sum())} projects re-timed around year {year} "
+                               f"in {time.time() - t0:.1f}s")
+                return cand
+        if time.time() - t0 > time_limit:
+            break
+    return None
+
+
+PRESETS: dict[str, dict] = {}  # E37: filled below the pipeline; see docs/EXPERIMENTS.md E37
+
+
 def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_leaves: int | None = 60,
           encoding: str = "step", balance: str = "cumulative", slice_seconds: float | None = None,
           lns_workers: int = 0, lns_seconds: float = 30.0, cut_rounds: int = 0, quick_seconds: float = 1.5,
@@ -92,7 +167,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = True,
           lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
           proof_options: dict | None = None, concurrent_proofs: bool = True,
-          low_priority_proofs: bool = True) -> Result:
+          low_priority_proofs: bool = True, lp_screen: bool = False, preset: str | None = None,
+          repair_warm: bool = True) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -103,7 +179,21 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     ones the LP cannot prune at once, in background threads with their own worker pools, alongside the main last year
     (whose tree leaves workers idle in its tail). Sound: a last year proven against the warm incumbent stays proven when
     the main solve improves the incumbent, and a better incumbent can only shrink the set of survivors.
-    low_priority_proofs (E36): run those concurrent proofs below normal OS priority, so they use only idle cores."""
+    low_priority_proofs (E36): run those concurrent proofs below normal OS priority, so they use only idle cores.
+    lp_screen (E37): with a warm incumbent, bound every last year up front (cash floor, then threaded LPs) and return
+    at once when that already certifies the incumbent within rel_gap; last years the screen prunes are never solved.
+    repair_warm (E38): a warm schedule that is infeasible for this instance (an edited model) is repaired with
+    repair_schedule instead of being dropped; projects missing from it start at their earliest allowed year.
+    preset (E37): a named option set from PRESETS ("1pct", "0.5pct") that stops at a certified gap. Arguments left at
+    this function's defaults take the preset's values; any other value passed explicitly wins over the preset."""
+    if preset is not None:
+        if preset not in PRESETS:
+            raise ValueError(f"unknown preset {preset!r}; choose from {sorted(PRESETS)}")
+        import inspect
+        given = {k: v for k, v in locals().items() if k in inspect.signature(solve).parameters}
+        defaults = {k: p.default for k, p in inspect.signature(solve).parameters.items()}
+        opts = {k: v for k, v in given.items() if k not in ("name", "preset") and v != defaults[k]}
+        return solve(name, **{**PRESETS[preset], **opts})
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -123,7 +213,9 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     def idle(best: float) -> None:  # LP-bound one more last year while workers are busy
         if queue:
             L = queue.pop(0)
-            lp[L] = lp_bound(inst, L)
+            from .bounds import cash_floor_bound
+            floor = cash_floor_bound(inst, L)  # E37: no model build or LP when the cash floor already prunes L
+            lp[L] = floor if floor >= best - rel_gap * abs(best) else max(floor, lp_bound(inst, L))
             return
         if best == np.inf:
             return
@@ -148,8 +240,12 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     if warm_start is not None:
         import json
         from pathlib import Path
-        st = inst.starts_from_dict(json.loads(Path(warm_start).read_text(encoding="utf-8"))["starts"])
+        st = _warm_starts(inst, json.loads(Path(warm_start).read_text(encoding="utf-8"))["starts"])
         ev = evaluate(inst, st)
+        if not ev["feasible"] and repair_warm:  # E38: an edited instance: repair the previous plan, don't drop it
+            fixed = repair_schedule(inst, st, log=log)
+            if fixed is not None:
+                st, ev = fixed, evaluate(inst, fixed)
         if ev["feasible"]:
             best_obj, best_starts = float(ev["objective"]), st
             trace.append((time.time() - t0, best_obj))
@@ -162,6 +258,22 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                 log.append(f"warm start ends in L={Lw}: solved first")
         else:
             log.append("warm start: infeasible for this instance, ignored")
+    if lp_screen and best_starts is not None:  # E37: bound every last year now; maybe the warm schedule is enough
+        cut = best_obj - rel_gap * abs(best_obj)
+        lp.update(screen_last_years(inst, L_order + others, cut, workers, log))
+        queue = []
+        if min(lp.values()) >= cut:
+            log.append("the screen certifies the warm schedule: no MIP solved")
+            status = {L: "pruned (LP)" for L in lp}
+            return Result(name, best_obj, inst.starts_to_dict(best_starts), True, min(lp.values()),
+                          time.time() - t0, trace, status, log)
+        for L in [L for L in L_order if lp[L] >= cut]:  # the warm schedule's own last year is settled already:
+            L_order.remove(L)                              # it joins the pruned ones (status, bound) at the end
+            others.append(L)
+            log.append(f"L={L}: pruned by the screen")
+        if not L_order:  # solve the most promising surviving last year instead
+            L_order = [min((L for L in others if lp[L] < cut), key=lambda L: lp[L])]
+            others.remove(L_order[0])
     proven_all = True
     background: dict = {}  # E34: L -> future of its concurrent proof
     if concurrent_proofs and best_starts is not None and others:
@@ -201,6 +313,9 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             best_obj, best_starts = r.objective, r.starts
         dual = min(dual, r.dual_bound)
     # finish bounding the remaining last years, then solve any that could still hold a better schedule
+    if lp_screen and queue:  # E37: the rest in threads, floor first (a cold start has no cutoff for the screen early)
+        lp.update(screen_last_years(inst, queue, best_obj - rel_gap * abs(best_obj), workers, log))
+        queue = []
     while queue:
         idle(best_obj)
     for L, fut in background.items():  # E34: collect the concurrent proofs
@@ -298,3 +413,12 @@ def solve_reference_highs(name: str, time_limit: float = 900.0, threads: int = 0
     dual = r.dual_bound if r.dual_bound is not None else -np.inf
     return Result(name, tr.best, starts, r.status == "Optimal", dual, time.time() - t0, trace, {},
                   [f"{r.status} {r.seconds:.1f}s nodes {r.nodes}"])
+
+
+# E37 presets: stop at a certified gap (incumbent vs proven bound over every last year) as fast as possible.
+PRESETS.update({
+    "1pct": dict(rel_gap=1e-2, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=8,
+                 lns_seconds=1800.0, lns_after_rampup=False, cutoff_after=10.0, slice_seconds=10.0),
+    "0.5pct": dict(rel_gap=5e-3, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=8,
+                   lns_seconds=1800.0, lns_after_rampup=False, cutoff_after=10.0, slice_seconds=10.0),
+})
