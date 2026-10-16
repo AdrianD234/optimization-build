@@ -540,3 +540,17 @@ The same 7 hard leaves (E31), as identical MPS files (E33); 120 s, one thread, o
 
 * Load: mean outside load 0.28-0.41 cores on the five tagged runs (one had a single 6.7 peak). P95 seed 0 is untagged because the load sampler had died during an app restart; `capopt campaign launch` now warns when the load log is stale.
 * **Verdict**: adopted. On cfadsds_P95, 2 of 3 seeds and the median beat COPT. **Updated KPI: 0.934 overall (a lower bound); CFADS family 0.552**, with the median below COPT's time on all four CFADS scenarios; flat envelope 2.680 (unchanged).
+
+### Validation on the untimed CPO scenarios (never used for tuning)
+
+Current defaults (the official KPI configuration plus E34/E36), warm start from each scenario's CPO schedule, one seed, 900 s cap, load-clean (mean outside load 0.27-1.11 cores):
+
+| Scenario | Funding family | Result | Final schedule vs the CPO's |
+|---|---|---|---|
+| cfads_P50 | CFADS (without debt service) | **proven in 57 s** | -5.3e-6 (better) |
+| cfads_P95 | CFADS (without debt service) | **proven in 68 s** | equal |
+| s1750_P50 | envelope (s1500 +/- 250) | not proven at 900 s, gap 1.7e-5 | -2.5e-5 (better) |
+| s1750_P95 | envelope | not proven at 900 s, gap 3.3e-5 | -4.9e-6 (better) |
+
+* **The family pattern holds on unseen data.** CFADS-type funding proves in about a minute. Envelope-type funding finds schedules as good as or better than the CPO's but stalls on the last plateau just above the 1e-5 target, as on s2000 (E31, E33, E35).
+* For practical use: on envelope scenarios capopt returns a schedule within about 2-3e-5 of proven optimal (better than the CPO's stored plan) well inside 15 minutes; the remaining sliver needs commercial node machinery.
