@@ -504,3 +504,11 @@ Load: all 18 runs were tagged, with the user's machine quiet. Two were mildly co
 
 * Load: outside load averaged 0.9-1.5 cores during these runs, just over the 1-core threshold, plus one isolated spike of about 18. That is consistent with system overhead from running about 40 solver processes, not outside work.
 * **Verdict**: adopted. cfadsds_P95 moves from 1.19x to parity. The trade-off: the L = 43 proof slows while it shares cores (390-575 s spread). E34 changes nothing on the other four scenarios (no survivors), so the **updated KPI** uses the official rows plus these medians: **overall 0.970 (a lower bound), CFADS family 0.584, flat envelope 2.680**.
+
+### Generalisation check with the current defaults (after E34)
+
+Most tuning since E10 used the six CPO scenarios, so the defaults were rechecked on instances never used for tuning:
+
+* **Pack regression** (slow suite, `tests/test_regression.py`): all 4 public instances prove their known optima within their limits (163 s in total).
+* **Held-out perturbed set** (exp06, 12 instances; each project's spend and PV scaled by independent factors in [0.9, 1.1]): **12 of 12 proven** within 300 s with the default pipeline (0.6-1.2 s growth/no-penalty; 4.9-12.7 s growth/penalised and one raw/penalised; 27-203 s raw/no-penalty; 102-166 s for the other two raw/penalised). Every returned schedule re-scores exactly under the exact evaluator.
+* **Verdict**: no sign of over-fitting to the CPO scenarios.
