@@ -232,7 +232,17 @@ def test_load_tag_flags_contended_runs(tmp_path):
                    encoding="utf-8")
     quiet = C.load_tag(95, 115, log)
     assert quiet == {"samples": 2, "other_cores_mean": 0.6, "other_cores_peak": 0.7, "free_gb_min": 7.5,
-                     "contended": False}
+                     "contended": False, "dropped": 0}
     busy = C.load_tag(95, 125, log)
     assert busy["contended"] and busy["other_cores_peak"] == 6.0
     assert C.load_tag(300, 400, log) is None and C.load_tag(0, 1, tmp_path / "missing.csv") is None
+
+
+def test_load_tag_drops_impossible_samples(tmp_path, monkeypatch):
+    """A sample claiming more busy cores than the machine has is a counter artefact, not load."""
+    monkeypatch.setattr(C.os, "cpu_count", lambda: 20)
+    log = tmp_path / "load.csv"
+    log.write_text("\n".join(["unix_time,other_cores,python_cores,excel_cores,free_gb", "100,0.6,19.0,0.0,8.0",
+                              "110,55.3,2.0,0.0,7.0", "120,0.8,19.0,0.0,7.5"]) + "\n", encoding="utf-8")
+    t = C.load_tag(95, 125, log)
+    assert t["dropped"] == 1 and t["samples"] == 2 and not t["contended"] and t["other_cores_peak"] == 0.8

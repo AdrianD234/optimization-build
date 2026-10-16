@@ -470,3 +470,24 @@ All on s2000_P50, L = 30, with the best-known schedule as cutoff and the 60-leaf
 | HiGHS 1.15 | 1 of 7 (leaf 34 in 72 s) | 3,500-5,900 |
 
 * **Verdict**: no engine advantage. A different single leaf closes for each, which is run-to-run noise. The plateau is intrinsically hard for both open-source engines, so swapping the leaf engine is not the path to COPT's 108 s on s2000_P50. COPT's edge more likely comes from its natively parallel tree on the whole problem plus commercial node machinery. pyscipopt is kept installed for future screens; it is not a capopt dependency.
+
+## Official KPI (2026-10-16): 3 seeds x 6 COPT-timed scenarios, load-tagged
+
+Setup (the KPI pass 4 configuration): warm start from each scenario's CPO schedule; 16 ALNS workers after the ramp-up, with big-project moves and 15 s patience; incumbent cutoff after 60 s; strong branching with automatic k and the capped score; 60 s re-split slices; idle-time LP trees for the other last years; 20 workers. Time limit 1.5x COPT's logged time (at least 300 s, at most 900 s), 1,200 s for cfadsds_P95high. Each scenario's number is the median of 3 seeds; unproven runs count at their time limit.
+
+Load: all 18 runs were tagged, with the user's machine quiet. Two were mildly contended (mean 1.06 / peak 5.4 outside cores) and were rerun clean; the reruns (511 s, 233 s) replace them. One impossible sample (55 "cores") was dropped as a counter artefact. Final: **18 of 18 clean**.
+
+| Scenario | COPT logged (warm) | capopt, seeds 0 / 1 / 2 | Median | Ratio (10 s shift) | Whole range below COPT? |
+|---|---|---|---|---|---|
+| cfadsds_P95high | 1,770 s | 582 / 617 / 544 | 582 | **0.33** | ✅ |
+| cfadsds_P50high | 491 s | 213 / 233 / 229 | 229 | **0.48** | ✅ |
+| cfadsds_P50 | 272 s | 203 / 227 / 207 | 207 | **0.77** | ✅ |
+| cfadsds_P95 | 433 s | 518 / 511 / 531 | 518 | 1.19 | ❌ |
+| s2000_P50high | 56 s | 135 / 169 / not proven (1.5e-5) | 169 | 2.70 | ❌ |
+| s2000_P50 | 108 s | not proven x3 (gap 1.7-1.9e-5 at 300 s) | at least 304 | at least 2.65 | ❌ |
+
+* **Primary KPI** (shifted geometric mean of the ratios, all six): **1.007**, a lower bound because s2000_P50 never proved. That is parity with COPT, not yet a win.
+* **By funding family** (the user expects CFADS-type funding in practice):
+  * **CFADS after debt service (4 scenarios): 0.62.** capopt is faster than COPT on three of four, with the whole 3-seed range below COPT's time, and 1.2x on the fourth.
+  * **Flat envelope (s2000, 2 scenarios): 2.68.** COPT is clearly faster. The flat envelope leaves a thin near-optimal plateau that only node-level machinery closes (E31, E33).
+* Caveats that favour COPT stay as stated in `ITERATION_LOOP.md`: COPT's times are solver-only after a warm start built in uncounted time, while capopt's are wall-clock including model build, from the CPO's stored schedule.
