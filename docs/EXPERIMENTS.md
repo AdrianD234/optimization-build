@@ -459,3 +459,14 @@ All on s2000_P50, L = 30, with the best-known schedule as cutoff and the 60-leaf
 | years 22-42 | 32.2% (time limit) | 42.9% (time limit) |
 
 * **Verdict**: valid but too weak to prune L = 42; it matches the research report's estimate of about 25% for one block. The module stays as a tested certificate tool. Pruning L = 42 would need multi-block Lagrangian decomposition with subgradient multipliers (backlog H16), a research-level change.
+
+### E33: SCIP 10 as the leaf engine? (the 7 hard s2000_P50 plateau leaves from E31)
+
+* Each leaf was exported from HiGHS as MPS, so both solvers saw identical input, then solved by SCIP 10.0 (pyscipopt 6.3.0) and HiGHS 1.15 side by side: the same objective limit (the best-known schedule), relative gap 1e-5, 120 s, one thread each.
+
+| | Leaves closed within 120 s | Node counts on unfinished leaves |
+|---|---|---|
+| SCIP 10 | 1 of 7 (leaf 37 in 77 s) | 3,700-7,100 |
+| HiGHS 1.15 | 1 of 7 (leaf 34 in 72 s) | 3,500-5,900 |
+
+* **Verdict**: no engine advantage. A different single leaf closes for each, which is run-to-run noise. The plateau is intrinsically hard for both open-source engines, so swapping the leaf engine is not the path to COPT's 108 s on s2000_P50. COPT's edge more likely comes from its natively parallel tree on the whole problem plus commercial node machinery. pyscipopt is kept installed for future screens; it is not a capopt dependency.

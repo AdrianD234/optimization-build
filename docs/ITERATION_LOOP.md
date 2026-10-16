@@ -137,6 +137,7 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | PARALLEL_BB R0, R5 | Pin LP-integral re-queues; reopen unexpected interrupts | ✅ | E27 audit |
 | PARALLEL_BB R1-R4 | Steal tuning | — | moot while stealing is off |
 | PARALLEL_BB R6 / UG | Never kill the donor | ❌ | equals BRANCHING E4 above |
+| MASTER_PLAN Phase 5 | SCIP as an alternative engine | ✖ (leaves) | E33: SCIP 10 is no better than HiGHS on the hard plateau leaves |
 
 Queue (cheap and high value first):
 1. CFADS #2(a) more leaves (one flag).
