@@ -142,6 +142,7 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | E33 follow-up | SCIP callbacks: capopt's capped strong-branching rule inside the tree | ✖ | E35: even full strong branching closes 0 of 7, so branching has no headroom; a cut separator remains untested |
 | E33 follow-up | SCIP exact (rational) mode to certify proofs | ❌ | only if audit-grade proofs are needed (Q9) |
 | KPI analysis | Prove the surviving last years concurrently | ✅ | E34: cfadsds_P95 1.19x to 1.00x; now the default |
+| KPI analysis | Run concurrent proofs below normal OS priority | ✅ | E36: cfadsds_P95 to 0.88x, P95high to 0.29x; now the default |
 
 Queue (cheap and high value first):
 1. CFADS #2(a) more leaves (one flag).

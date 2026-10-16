@@ -92,7 +92,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = True,
           lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
           proof_options: dict | None = None, concurrent_proofs: bool = True,
-          low_priority_proofs: bool = False) -> Result:
+          low_priority_proofs: bool = True) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).

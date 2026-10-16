@@ -528,3 +528,15 @@ The same 7 hard leaves (E31), as identical MPS files (E33); 120 s, one thread, o
 * Engine diversity beats seed diversity (3 of 7 against 1), but 4 of the 7 leaves resist every engine, seed and branching rule, and those set the proof's critical path, so engine racing would barely shorten s2000_P50.
 * Even full strong branching (the best possible branching decisions) closes none: **the plateau is not a branching-quality problem**. A SCIP branching callback with capopt's rule has no headroom; dropped on evidence.
 * The outer LP-tree proof engine (GAP_ANATOMY #2) is also re-ranked down: E29's data shows it about as fast as HiGHS leaves on P95's L = 43 (383 s against 350-480 s) and slower on cfadsds_P50.
+
+### E36: run the concurrent proofs below normal OS priority (now the default)
+
+* E34's concurrent L = 42 proof competed with the main L = 43 tree for cores, which slowed L = 43 (390-575 s). With `low_priority_proofs` (default on), the concurrent proof's worker processes run at below-normal OS priority (`SetPriorityClass` on Windows, `os.nice(10)` elsewhere), so they use only the cores the main last year leaves idle. A test confirmed a real bug before any timing: untyped ctypes truncated Windows' pointer-sized process handle, making the call a silent no-op. The handle is now typed, and the call raises if it fails.
+
+| Scenario | Official (sequential) | E34 (concurrent) | **E36 (concurrent, low priority), seeds 0 / 1 / 2** | Median | COPT |
+|---|---|---|---|---|---|
+| cfadsds_P95 | 518 (1.19x) | 433 (1.00x) | 378 / 373 / 475 (L = 42 done at 335-345 s) | **378 (0.88x)** | 433 |
+| cfadsds_P95high | 582 (0.33x) | 555 (0.32x) | 400 / 504 / 518 | **504 (0.29x)** | 1,770 |
+
+* Load: mean outside load 0.28-0.41 cores on the five tagged runs (one had a single 6.7 peak). P95 seed 0 is untagged because the load sampler had died during an app restart; `capopt campaign launch` now warns when the load log is stale.
+* **Verdict**: adopted. On cfadsds_P95, 2 of 3 seeds and the median beat COPT. **Updated KPI: 0.935 overall (a lower bound); CFADS family 0.552**, with the median below COPT's time on all four CFADS scenarios; flat envelope 2.680 (unchanged).
