@@ -90,7 +90,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           leaf_cutoff: bool = False, rel_gap: float = 1e-9, seed: int = 0, cutoff_after: float | None = None,
           sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None,
           lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = True,
-          lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None) -> Result:
+          lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
+          proof_options: dict | None = None) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -163,7 +164,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                            quick_seconds=quick_seconds, leaf_cutoff=leaf_cutoff, rel_gap=rel_gap, seed=seed,
                            cutoff_after=cutoff_after, sb_candidates=sb_candidates, lns_big=lns_big,
                            lns_after_rampup=lns_after_rampup, lns_patience=lns_patience, lns_alns=lns_alns,
-                           lns_first=lns_first, steal_after=steal_after, race_after=race_after)
+                           lns_first=lns_first, steal_after=steal_after, race_after=race_after,
+                           proof_options=proof_options)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven
@@ -183,7 +185,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, max(time.time() - t0 + 1.0, time_limit),
                            incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                            rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
-                           steal_after=steal_after, race_after=race_after)
+                           steal_after=steal_after, race_after=race_after, proof_options=proof_options)
         log.append(f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s")
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

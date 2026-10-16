@@ -414,3 +414,48 @@ From 2026-10-16, an external sampler logs the machine's CPU load outside capopt 
   * Documented as prerequisites for ever combining racing with stealing or slicing: B3 (stealing and racing working against each other) and B4 (racers giving way to queued work).
 * **Verdict**: correct, with a gain of 0-15%, inside seed noise. The audit measured the same thing directly on HiGHS: seeds change node counts up to 4.2x on a leaf, the best of 4 seeds is 1.3x faster, but the run's critical path improves only 7%. That matches the literature: racing ramp-up has not proven effective in ParaSCIP (Koch et al. 2012, Carvajal et al. 2014). Using all cores may also cost the bound-holding leaves their single-core boost clock. Racing stays opt-in and off. The remaining tail lever is BRANCHING_AND_TREE E4 (hedged re-split: the parent keeps running while its children use the idle workers).
 * Side check from the audit: HiGHS's `mip_abs_gap=1e-6` is in scaled solver units. After auto-scaling it is at most 2e-6 objective units on the CPO models (about 0.01 on the no-penalty pack), against a 1e-5 relative tolerance of about 1e6 units, so it cannot close a leaf early.
+
+### E29: more leaves on the CFADS scenarios (200 instead of 60; CFADS_BOUND_STALL #2(a))
+
+| Scenario | KPI pass 4 (60 leaves) | E29 (200 leaves) | Load tag |
+|---|---|---|---|
+| cfadsds_P50 | 172 s | 321 s: the ramp-up alone took 312 s (437 pruned), then 9 s of tree | contended (1.6 mean) |
+| cfadsds_P95 | 658 s | 575 s: **the ramp-up alone proved L = 43** (383 s, 384 pruned, no HiGHS tree work), then L = 42 | contended (2.1 mean, 8.6 peak) |
+
+* **Verdict**: no gain, not adopted. With 16-candidate strong branching, the batched LP ramp-up is expensive per expansion, and 200 leaves turns it into most of the run.
+* **Finding**: on cfadsds_P95 the outer strong-branching LP tree on 20 workers **proved a whole last year by itself**, about as fast as the HiGHS leaves usually do (369-480 s). That is real evidence for GAP_ANATOMY #2 (a persistent outer LP tree as the proof engine, handing HiGHS only the tail).
+
+### E30: HiGHS settings for proof-phase leaves (BRANCHING_AND_TREE E5)
+
+* Option `proof_options`: HiGHS options set only on leaves launched with the incumbent cutoff. A rejected option name now raises; highspy only returns an error status, which a test caught.
+
+| Run (all load-clean) | Baseline | `mip_heuristic_effort=0` | + `mip_pscost_minreliable=16` |
+|---|---|---|---|
+| cfadsds_P50 (KPI pass 4 setup) | 172 s | 163 s | 172 s |
+| s2000_P50 proof-only (E25 setup) | 354 s (E25, untagged); 314 s (E26b, 120 s slices) | 496 s | 433 s |
+
+* **Verdict**: no gain, not adopted. HiGHS's default leaf settings are as good as or better than these, even when the incumbent is optimal; its heuristics seem to help the proof as well. The option stays for future screens.
+
+### E31: where s2000_P50's proof time goes (pre-screens for the hedged re-split)
+
+All on s2000_P50, L = 30, with the best-known schedule as cutoff and the 60-leaf strong-branching ramp-up (k = 4):
+
+* **Leaf census** (BRANCHING_AND_TREE E8; 60 leaves solved independently on 20 workers, 120 s cap): **7 leaves are hard** (unfinished at 120 s after 4,000-5,800 nodes); the other 53 have a median of 11 s. The top 10 leaves take 65% of all leaf time. Hardness is not predicted by the LP bound: every leaf sits 1.2-1.5e-5 below the cutoff, the near-optimal plateau the gap-anatomy study found. The leaf with the weakest LP bound solves in 9 s.
+* **Splitting the hard leaves** (the hedged re-split's premise): their strong-branching children are as hard as their parents. Of the 7 subtrees, only 1 closed within 120 s, and only because one child was pruned outright by its LP; the other children ran unfinished with 3,600-7,100 nodes.
+* **HiGHS parallel MIP** (`threads=3` per hard leaf): the same node counts as one thread, and none finished.
+* **Verdict**: on s2000_P50 the tail is a handful of plateau leaves that resist splitting, racing (E28) and HiGHS threads. The hedged re-split (BRANCHING_AND_TREE E4) would buy little here and is deprioritised. COPT closes this scenario in 108 s, which points to stronger node-level machinery (cuts, conflict analysis, node selection) rather than parallelism: fork-level work.
+
+### E32: year-block Lagrangian bounds for pruning a last year (CFADS_BOUND_STALL #4, GAP_ANATOMY #3)
+
+* New module `capopt.bounds.block_bound`. Keep the integrality, the per-project rows and the year rows of one block of years; relax the other year rows priced at the LP duals; solve that MIP. By weak duality its dual bound is a valid lower bound on MIP(L), even when it stops at a time limit. Tests: with integrality relaxed it equals the LP bound exactly (relative difference 1e-16), which checks HiGHS's dual sign convention, and on the pack it always lies between the LP bound and the optimum.
+* **Pack** (L = 18, 30 s cap): years 8-17 close 44.6% (raw_penalised) and 99.2% (growth_penalised) of the LP gap.
+* **The target** (cfadsds_P95/P95high, L = 42, which must be pruned against the L = 43 incumbent; its LP sits 2.4-2.5e-3 below the cutoff; 60 s caps):
+
+| Block kept | P95 | P95high |
+|---|---|---|
+| years 37-42 | 18.1% of the gap to the cutoff (5 s) | 18.1% (3 s) |
+| years 32-42 | 25.0% (time limit) | 25.3% (time limit) |
+| years 4-16 | 18.4% (52 s) | 19.0% (53 s) |
+| years 22-42 | 32.2% (time limit) | 42.9% (time limit) |
+
+* **Verdict**: valid but too weak to prune L = 42; it matches the research report's estimate of about 25% for one block. The module stays as a tested certificate tool. Pruning L = 42 would need multi-block Lagrangian decomposition with subgradient multipliers (backlog H16), a research-level change.
