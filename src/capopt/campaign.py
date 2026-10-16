@@ -53,15 +53,21 @@ def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
     """Machine load outside capopt during [t_start, t_end], from a CSV of samples
     (unix_time, other_cores, python_cores, excel_cores, free_gb; one row per ~10 s). `contended` is True when other
     processes averaged more than `mean_limit` cores or peaked above `peak_limit`. None when no samples cover the run.
+    Samples claiming more busy cores than the machine has are counter artefacts (Windows reports them when a process
+    starts or exits mid-sample) and are dropped; `dropped` counts them.
     Timing results are tagged rather than discarded: a contended run is flagged for a rerun before it enters the KPI."""
     path = Path(os.environ.get("CAPOPT_LOAD_LOG", LOAD_LOG) if path is None else path)
     if not path.exists():
         return None
-    rows = []
+    cores = os.cpu_count() or 1
+    rows, dropped = [], 0
     for line in path.read_text(encoding="utf-8-sig").splitlines()[1:]:
         f = line.split(",")
         try:
             if t_start <= float(f[0]) <= t_end:
+                if float(f[1]) > cores:
+                    dropped += 1
+                    continue
                 rows.append((float(f[1]), float(f[4])))
         except (ValueError, IndexError):
             continue
@@ -70,7 +76,8 @@ def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
     other = [r[0] for r in rows]
     mean, peak = sum(other) / len(other), max(other)
     return {"samples": len(rows), "other_cores_mean": round(mean, 2), "other_cores_peak": round(peak, 2),
-            "free_gb_min": round(min(r[1] for r in rows), 1), "contended": mean > mean_limit or peak > peak_limit}
+            "free_gb_min": round(min(r[1] for r in rows), 1), "contended": mean > mean_limit or peak > peak_limit,
+            "dropped": dropped}
 HEARTBEAT_S = 30.0
 STALE_S = 300.0          # no heartbeat for this long => STALLED
 NOT_STARTED_S = 60.0     # launch marker this old with no progress file => NOT_STARTED
