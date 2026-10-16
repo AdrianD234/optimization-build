@@ -225,7 +225,8 @@ def test_launch_verify_then_kill_is_detected_as_stalled(tmp_path):
     assert st["state"] == "STALLED" and "not running" in st["reason"]
 
 
-def test_load_tag_flags_contended_runs(tmp_path):
+def test_load_tag_flags_contended_runs(tmp_path, monkeypatch):
+    monkeypatch.setattr(C.os, "cpu_count", lambda: 20)  # CI runners have 2-4 cores: pin it so 6.0 is a real sample
     log = tmp_path / "load.csv"
     log.write_text("unix_time,other_cores,python_cores,excel_cores,free_gb\n"
                    "100,0.5,19.0,0.0,8.0\n110,0.7,19.0,0.0,7.5\n120,6.0,14.0,5.5,6.0\n200,0.1,0.0,0.0,9.0\n",
