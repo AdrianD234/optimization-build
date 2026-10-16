@@ -91,13 +91,17 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None,
           lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = True,
           lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
-          proof_options: dict | None = None) -> Result:
+          proof_options: dict | None = None, concurrent_proofs: bool = False) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
     lns_alns: adaptive LNS neighbourhood selection (E20), on by default.
     warm_start: path to a solution JSON with "starts" (e.g. a previous plan); used as the first incumbent if feasible.
-    The time counted includes loading it."""
+    The time counted includes loading it.
+    concurrent_proofs (E34): with a warm incumbent, LP-bound every other last year first and start the proofs of the
+    ones the LP cannot prune at once, in background threads with their own worker pools, alongside the main last year
+    (whose tree leaves workers idle in its tail). Sound: a last year proven against the warm incumbent stays proven when
+    the main solve improves the incumbent, and a better incumbent can only shrink the set of survivors."""
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -157,6 +161,26 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         else:
             log.append("warm start: infeasible for this instance, ignored")
     proven_all = True
+    background: dict = {}  # E34: L -> future of its concurrent proof
+    if concurrent_proofs and best_starts is not None and others:
+        from concurrent.futures import ThreadPoolExecutor
+        while queue:  # LP-bound every other last year now (seconds), so the survivors are known up front
+            idle(best_obj)
+        early = [L for L in others if lp[L] < best_obj - rel_gap * abs(best_obj)]
+        if early:
+            tpe = ThreadPoolExecutor(len(early))
+            for L in early:
+                background[L] = tpe.submit(
+                    solve_parallel, name, L, workers, n_leaves, encoding, balance, time_limit,
+                    incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
+                    rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
+                    steal_after=steal_after, race_after=race_after, proof_options=proof_options)
+            tpe.shutdown(wait=False)
+            log.append(f"concurrent proofs started for L={early} at {time.time() - t0:.1f}s")
+            others_idle = [L for L in others if L not in background]  # idle LP trees skip the ones being proven
+            others[:] = others_idle + list(background)  # keep the full list for the final status table
+            for L in background:
+                tree_pruned.add(L)  # not pruned: exclude from idle trees; resolved from the background result below
     for L in L_order:
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, time_limit,  # relative to the shared t0
                            incumbent=best_starts, t0=t0, idle=idle, slice_seconds=slice_seconds,
@@ -176,9 +200,20 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     # finish bounding the remaining last years, then solve any that could still hold a better schedule
     while queue:
         idle(best_obj)
-    survivors = [L for L in others if lp[L] < best_obj - rel_gap * abs(best_obj)]
+    for L, fut in background.items():  # E34: collect the concurrent proofs
+        r = fut.result()
+        tree_pruned.discard(L)
+        log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
+        status[L] = "solved" if r.proven else "time limit"
+        proven_all &= r.proven
+        trace += r.trace
+        if r.objective < best_obj:
+            best_obj, best_starts = r.objective, r.starts
+        dual = min(dual, r.dual_bound)
+    survivors = [L for L in others if L not in background and lp[L] < best_obj - rel_gap * abs(best_obj)]
     for L in others:
-        status[L] = "pruned (LP)" if L not in survivors else status.get(L, "open")
+        if L not in background:
+            status[L] = "pruned (LP)" if L not in survivors else status.get(L, "open")
     for L in survivors:
         # a surviving last year is a pure proof against a good incumbent: same tree settings, cutoff from the start
         # (time_limit is relative to the shared t0; subtracting the elapsed time here used to count it twice)
@@ -194,8 +229,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             best_obj, best_starts = r.objective, r.starts
         dual = min(dual, r.dual_bound)
     if others:
-        log.append(f"LP-pruned last years: {len(others) - len(survivors)} of {len(others)}")
-        dual = min([dual] + [lp[L] for L in others if L not in survivors and lp[L] < dual])
+        log.append(f"LP-pruned last years: {len(others) - len(survivors) - len(background)} of {len(others)}")
+        dual = min([dual] + [lp[L] for L in others if L not in survivors and L not in background and lp[L] < dual])
     trace.sort()
     mono, run = [], np.inf
     for t, v in trace:

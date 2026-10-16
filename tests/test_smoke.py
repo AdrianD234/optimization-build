@@ -246,6 +246,11 @@ def test_warm_start_in_a_later_last_year_is_solved_first_and_still_proves(tmp_pa
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2, warm_start=str(sol))
     assert any("solved first" in line for line in r.log)
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    # E34: the same, with the surviving last years proven concurrently
+    rc = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2,
+                      warm_start=str(sol), concurrent_proofs=True)
+    assert any("concurrent proofs started" in line for line in rc.log), rc.log
+    assert rc.proven and rc.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
 
 
 def test_lns_burst_before_the_ramp_up_still_proves(tmp_path):
