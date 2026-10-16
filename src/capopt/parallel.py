@@ -16,6 +16,7 @@ import heapq
 import json
 import multiprocessing as mp
 import os
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -252,8 +253,23 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
 _W: dict = {}
 
 
+def _lower_priority() -> None:
+    """E36: run this worker below normal OS priority, so it only uses cores the main solve leaves idle."""
+    if sys.platform == "win32":
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p  # a pointer-sized pseudo-handle: untyped, it gets truncated
+        k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        if not k.SetPriorityClass(k.GetCurrentProcess(), 0x4000):  # BELOW_NORMAL_PRIORITY_CLASS
+            raise OSError("SetPriorityClass failed")
+    else:
+        os.nice(10)
+
+
 def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9, live=None,
-          steal=None, proof_options=None):
+          steal=None, proof_options=None, low_priority=False):
+    if low_priority:
+        _lower_priority()
     model = last_year_model(I.load(name), L, encoding, balance)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
               cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal, proof_options=proof_options or {})
@@ -480,7 +496,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_after_rampup: bool = False, lns_patience: float | None = None,
                    lns_alns: bool = False, lns_first: float = 0.0,
                    steal_after: float | None = None, race_after: float | None = None,
-                   max_racers: int = 4, proof_options: dict | None = None) -> ParallelResult:
+                   max_racers: int = 4, proof_options: dict | None = None,
+                   low_priority: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -511,6 +528,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         running copy has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
         (optimal, pruned, infeasible) closes it and the others are stopped; a group ending open is re-split or closed
         only when its last copy ends, with the best bound any copy reached. None = off.
+    low_priority (E36): the worker processes run below normal OS priority (used for concurrent proofs of other last
+        years, so the main last year keeps the cores it needs).
     proof_options (E30): HiGHS options set on proof-phase leaves only (those launched with the incumbent cutoff), e.g.
         {"mip_heuristic_effort": 0.0} once the schedule search is LNS's job.
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
@@ -562,7 +581,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
                                          str(cuts_path) if cut_rounds else None, rel_gap, live, steal,
-                                         proof_options))
+                                         proof_options, low_priority))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:
