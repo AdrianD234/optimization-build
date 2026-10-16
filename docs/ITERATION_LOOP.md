@@ -118,11 +118,11 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | BRANCHING_AND_TREE E1 | Live leaf bounds, bound inheritance | ✅ | E1 |
 | BRANCHING_AND_TREE E2 | Phase-aware leaf cutoff | ✅ | E2 (`cutoff_after`) |
 | BRANCHING_AND_TREE E3 | Strong-branching ramp-up | ✅ | E11, E12, E22, E23 |
-| BRANCHING_AND_TREE E4 | **Hedged re-split: the parent keeps running while its children use idle workers** (ranked the largest expected wall-clock gain) | ❌ | E27 killed the parent (slower, as the literature predicts); E28 races copies (neutral) |
+| BRANCHING_AND_TREE E4 | Hedged re-split: the parent keeps running while its children use idle workers | ✖ (s2000) | E31 pre-screen: hard plateau leaves' children are as hard as their parents (1 of 7 subtrees closed); not built |
 | BRANCHING_AND_TREE E5 | Proof-phase leaf settings (heuristic effort, pseudocost reliability) | ✖ | E30: no gain (defaults as good or better) |
-| BRANCHING_AND_TREE E6 | Endgame racing | ◐ | E28: correct (audited), 0-15% gain, off; `threads=k` and encoding variants untried |
+| BRANCHING_AND_TREE E6 | Endgame racing | ◐ | E28: correct (audited), 0-15% gain, off; E31: `threads=3` no gain; encoding variants untried |
 | BRANCHING_AND_TREE E7 | General disjunctions | ✖ | gap anatomy: variable splits dominate |
-| BRANCHING_AND_TREE E8 | Leaf difficulty census and scheduling | ◐ | census logged, not used for scheduling |
+| BRANCHING_AND_TREE E8 | Leaf difficulty census and scheduling | ◐ | E31 census: 7 of 60 leaves hard, not predictable from the LP bound |
 | BRANCHING_AND_TREE fork | Dynamic in-solve cutoff (HiGHS change) | ❌ | Q10 |
 | GAP_ANATOMY #1 | Strong-branching ramp-up and re-split | ✅ | E11-E12 |
 | GAP_ANATOMY #2 | Outer LP tree as the main proof engine | ◐ | E29: the 200-leaf ramp-up alone proved P95's L = 43 in 383 s, so it is promising; no persistent loop yet |

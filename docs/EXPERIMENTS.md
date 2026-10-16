@@ -435,3 +435,12 @@ From 2026-10-16, an external sampler logs the machine's CPU load outside capopt 
 | s2000_P50 proof-only (E25 setup) | 354 s (E25, untagged); 314 s (E26b, 120 s slices) | 496 s | 433 s |
 
 * **Verdict**: no gain, not adopted. HiGHS's default leaf settings are as good as or better than these, even when the incumbent is optimal; its heuristics seem to help the proof as well. The option stays for future screens.
+
+### E31: where s2000_P50's proof time goes (pre-screens for the hedged re-split)
+
+All on s2000_P50, L = 30, with the best-known schedule as cutoff and the 60-leaf strong-branching ramp-up (k = 4):
+
+* **Leaf census** (BRANCHING_AND_TREE E8; 60 leaves solved independently on 20 workers, 120 s cap): **7 leaves are hard** (unfinished at 120 s after 4,000-5,800 nodes); the other 53 have a median of 11 s. The top 10 leaves take 65% of all leaf time. Hardness is not predicted by the LP bound: every leaf sits 1.2-1.5e-5 below the cutoff, the near-optimal plateau the gap-anatomy study found. The leaf with the weakest LP bound solves in 9 s.
+* **Splitting the hard leaves** (the hedged re-split's premise): their strong-branching children are as hard as their parents. Of the 7 subtrees, only 1 closed within 120 s, and only because one child was pruned outright by its LP; the other children ran unfinished with 3,600-7,100 nodes.
+* **HiGHS parallel MIP** (`threads=3` per hard leaf): the same node counts as one thread, and none finished.
+* **Verdict**: on s2000_P50 the tail is a handful of plateau leaves that resist splitting, racing (E28) and HiGHS threads. The hedged re-split (BRANCHING_AND_TREE E4) would buy little here and is deprioritised. COPT closes this scenario in 108 s, which points to stronger node-level machinery (cuts, conflict analysis, node selection) rather than parallelism: fork-level work.
