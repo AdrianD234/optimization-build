@@ -71,6 +71,6 @@ def test_proof_options_reach_proof_phase_leaves_only(best_known):
     assert r.proven and r.objective == pytest.approx(best_known[name]["objective"], rel=1e-9)
     _, live, steal = _worker_state(name, 18)
     P._W["proof_options"] = {"mip_heuristic_effort": 0.0, "no_such_option": 1}
-    with pytest.raises(Exception):  # a bad option name must fail loudly, not be silently ignored
+    with pytest.raises(ValueError, match="no_such_option"):  # a bad option name must fail loudly
         P._solve_leaf([], 1.0, 0, time.time(), True, 0, -np.inf)
     P._W.clear()
