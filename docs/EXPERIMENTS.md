@@ -512,3 +512,19 @@ Most tuning since E10 used the six CPO scenarios, so the defaults were rechecked
 * **Pack regression** (slow suite, `tests/test_regression.py`): all 4 public instances prove their known optima within their limits (163 s in total).
 * **Held-out perturbed set** (exp06, 12 instances; each project's spend and PV scaled by independent factors in [0.9, 1.1]): **12 of 12 proven** within 300 s with the default pipeline (0.6-1.2 s growth/no-penalty; 4.9-12.7 s growth/penalised and one raw/penalised; 27-203 s raw/no-penalty; 102-166 s for the other two raw/penalised). Every returned schedule re-scores exactly under the exact evaluator.
 * **Verdict**: no sign of over-fitting to the CPO scenarios.
+
+### E35: engine racing and branching quality on the hard s2000_P50 plateau leaves
+
+The same 7 hard leaves (E31), as identical MPS files (E33); 120 s, one thread, objective limit = the best-known schedule.
+
+| Strategy | Leaves closed within 120 s |
+|---|---|
+| HiGHS, seed 0 / best of 3 seeds | 1 / 1 of 7 |
+| SCIP 10, best of 3 seeds | 2 of 7 |
+| **Best of both engines (racing)** | **3 of 7** |
+| SCIP, full strong branching | **0 of 7** (only 150-340 nodes each) |
+| SCIP, pseudocost branching | 1 of 7 |
+
+* Engine diversity beats seed diversity (3 of 7 against 1), but 4 of the 7 leaves resist every engine, seed and branching rule, and those set the proof's critical path, so engine racing would barely shorten s2000_P50.
+* Even full strong branching (the best possible branching decisions) closes none: **the plateau is not a branching-quality problem**. A SCIP branching callback with capopt's rule has no headroom; dropped on evidence.
+* The outer LP-tree proof engine (GAP_ANATOMY #2) is also re-ranked down: E29's data shows it about as fast as HiGHS leaves on P95's L = 43 (383 s against 350-480 s) and slower on cfadsds_P50.
