@@ -126,14 +126,14 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | BRANCHING_AND_TREE fork | Dynamic in-solve cutoff (HiGHS change) | ❌ | Q10 |
 | GAP_ANATOMY #1 | Strong-branching ramp-up and re-split | ✅ | E11-E12 |
 | GAP_ANATOMY #2 | Outer LP tree as the main proof engine | ◐ | E29: the 200-leaf ramp-up alone proved P95's L = 43 in 383 s, so it is promising; no persistent loop yet |
-| GAP_ANATOMY #3 | Year-block Lagrangian bound | ❌ | queued (with CFADS #4) |
+| GAP_ANATOMY #3 | Year-block Lagrangian bound | ✅ tool | E32: `capopt.bounds`, valid and tested; 18-43% of the L = 42 gap |
 | GAP_ANATOMY #4-5 | Gomory splits; drop list | ✖ | as advised |
 | CFADS_BOUND_STALL #1 | Capped product score, k = 16 | ✅ | E22, E23 |
 | CFADS_BOUND_STALL #2(a) | More leaves (about 200) when the root has more than 15 fractional projects | ✖ | E29: the ramp-up dominates (P50 321 s vs 172 s) |
 | CFADS_BOUND_STALL #2(b) | Work stealing | ✖ | E27: correct but slower |
 | CFADS_BOUND_STALL #3(a) | Root cover cuts | ✖ | E22B: no gain |
 | CFADS_BOUND_STALL #3(b) | End-of-horizon covering cuts | ❌ | queued |
-| CFADS_BOUND_STALL #4 | Final-years block bound to prune P95's L = 42 | ❌ | queued |
+| CFADS_BOUND_STALL #4 | Final-years block bound to prune P95's L = 42 | ✖ | E32: closes at most 43% of the gap, so it cannot prune; multi-block decomposition (H16) would be needed |
 | PARALLEL_BB R0, R5 | Pin LP-integral re-queues; reopen unexpected interrupts | ✅ | E27 audit |
 | PARALLEL_BB R1-R4 | Steal tuning | — | moot while stealing is off |
 | PARALLEL_BB R6 / UG | Never kill the donor | ❌ | equals BRANCHING E4 above |

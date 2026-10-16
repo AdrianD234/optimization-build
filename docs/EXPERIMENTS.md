@@ -444,3 +444,18 @@ All on s2000_P50, L = 30, with the best-known schedule as cutoff and the 60-leaf
 * **Splitting the hard leaves** (the hedged re-split's premise): their strong-branching children are as hard as their parents. Of the 7 subtrees, only 1 closed within 120 s, and only because one child was pruned outright by its LP; the other children ran unfinished with 3,600-7,100 nodes.
 * **HiGHS parallel MIP** (`threads=3` per hard leaf): the same node counts as one thread, and none finished.
 * **Verdict**: on s2000_P50 the tail is a handful of plateau leaves that resist splitting, racing (E28) and HiGHS threads. The hedged re-split (BRANCHING_AND_TREE E4) would buy little here and is deprioritised. COPT closes this scenario in 108 s, which points to stronger node-level machinery (cuts, conflict analysis, node selection) rather than parallelism: fork-level work.
+
+### E32: year-block Lagrangian bounds for pruning a last year (CFADS_BOUND_STALL #4, GAP_ANATOMY #3)
+
+* New module `capopt.bounds.block_bound`. Keep the integrality, the per-project rows and the year rows of one block of years; relax the other year rows priced at the LP duals; solve that MIP. By weak duality its dual bound is a valid lower bound on MIP(L), even when it stops at a time limit. Tests: with integrality relaxed it equals the LP bound exactly (relative difference 1e-16), which checks HiGHS's dual sign convention, and on the pack it always lies between the LP bound and the optimum.
+* **Pack** (L = 18, 30 s cap): years 8-17 close 44.6% (raw_penalised) and 99.2% (growth_penalised) of the LP gap.
+* **The target** (cfadsds_P95/P95high, L = 42, which must be pruned against the L = 43 incumbent; its LP sits 2.4-2.5e-3 below the cutoff; 60 s caps):
+
+| Block kept | P95 | P95high |
+|---|---|---|
+| years 37-42 | 18.1% of the gap to the cutoff (5 s) | 18.1% (3 s) |
+| years 32-42 | 25.0% (time limit) | 25.3% (time limit) |
+| years 4-16 | 18.4% (52 s) | 19.0% (53 s) |
+| years 22-42 | 32.2% (time limit) | 42.9% (time limit) |
+
+* **Verdict**: valid but too weak to prune L = 42; it matches the research report's estimate of about 25% for one block. The module stays as a tested certificate tool. Pruning L = 42 would need multi-block Lagrangian decomposition with subgradient multipliers (backlog H16), a research-level change.

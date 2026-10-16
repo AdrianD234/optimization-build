@@ -273,8 +273,11 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
         del closing
 
     b.auto_scale()
+    row_year = {r: t for t, r in enumerate(start_rows)}  # rows tied to one year (for year-block bounds)
+    row_year.update({r: t for t, r in enumerate(bal_rows)})
+    row_year.update({r: t for t, r in zip(years, band_rows)})
     return Model(inst, "last_year", b, L, encoding, options, start_cols,
-                 {"net": net_cols, "bands": band_cols, "fill": fill})
+                 {"net": net_cols, "bands": band_cols, "fill": fill, "row_year": row_year})
 
 
 def reference_bigm(inst: Instance) -> Model:
