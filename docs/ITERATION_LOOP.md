@@ -125,7 +125,7 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | BRANCHING_AND_TREE E8 | Leaf difficulty census and scheduling | ◐ | E31 census: 7 of 60 leaves hard, not predictable from the LP bound |
 | BRANCHING_AND_TREE fork | Dynamic in-solve cutoff (HiGHS change) | ❌ | Q10 |
 | GAP_ANATOMY #1 | Strong-branching ramp-up and re-split | ✅ | E11-E12 |
-| GAP_ANATOMY #2 | Outer LP tree as the main proof engine | ◐ | E29: the 200-leaf ramp-up alone proved P95's L = 43 in 383 s, so it is promising; no persistent loop yet |
+| GAP_ANATOMY #2 | Outer LP tree as the main proof engine | ◐ deprioritised | E29: about as fast as HiGHS leaves on P95's L = 43, slower on cfadsds_P50; not worth a big build yet |
 | GAP_ANATOMY #3 | Year-block Lagrangian bound | ✅ tool | E32: `capopt.bounds`, valid and tested; 18-43% of the L = 42 gap |
 | GAP_ANATOMY #4-5 | Gomory splits; drop list | ✖ | as advised |
 | CFADS_BOUND_STALL #1 | Capped product score, k = 16 | ✅ | E22, E23 |
@@ -138,10 +138,11 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | PARALLEL_BB R1-R4 | Steal tuning | — | moot while stealing is off |
 | PARALLEL_BB R6 / UG | Never kill the donor | ❌ | equals BRANCHING E4 above |
 | MASTER_PLAN Phase 5 | SCIP as an alternative engine | ✖ (leaves) | E33: SCIP 10 is no better than HiGHS on the hard plateau leaves |
-| E33 follow-up | Engine racing: HiGHS + SCIP copies of a hard leaf (they closed different leaves in E33) | ❌ | queued after the official KPI: 7 leaves x seeds x both engines; how often does either close |
-| E33 follow-up | SCIP callbacks: capopt's capped strong-branching rule inside the tree; end-of-horizon covering-cut separator | ❌ | strategic; the route to custom node machinery without a HiGHS fork |
+| E33 follow-up | Engine racing: HiGHS + SCIP copies of a hard leaf | ✖ | E35: 3 of 7 closed against 1 of 7, but the 4 hardest resist everything; not integrated |
+| E33 follow-up | SCIP callbacks: capopt's capped strong-branching rule inside the tree | ✖ | E35: even full strong branching closes 0 of 7, so branching has no headroom; a cut separator remains untested |
 | E33 follow-up | SCIP exact (rational) mode to certify proofs | ❌ | only if audit-grade proofs are needed (Q9) |
 | KPI analysis | Prove the surviving last years concurrently | ✅ | E34: cfadsds_P95 1.19x to 1.00x; now the default |
+| KPI analysis | Run concurrent proofs below normal OS priority | ✅ | E36: cfadsds_P95 to 0.88x, P95high to 0.29x; now the default |
 
 Queue (cheap and high value first):
 1. CFADS #2(a) more leaves (one flag).

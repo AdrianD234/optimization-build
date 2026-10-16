@@ -247,3 +247,12 @@ def test_load_tag_drops_impossible_samples(tmp_path, monkeypatch):
                               "110,55.3,2.0,0.0,7.0", "120,0.8,19.0,0.0,7.5"]) + "\n", encoding="utf-8")
     t = C.load_tag(95, 125, log)
     assert t["dropped"] == 1 and t["samples"] == 2 and not t["contended"] and t["other_cores_peak"] == 0.8
+
+
+def test_load_log_age(tmp_path):
+    log = tmp_path / "load.csv"
+    assert C.load_log_age(log) is None
+    now = int(time.time())
+    log.write_text("\n".join(["unix_time,other_cores,python_cores,excel_cores,free_gb", f"{now - 300},0.5,0.0,0.0,8.0"])
+                   + "\n", encoding="utf-8")
+    assert 295 <= C.load_log_age(log) <= 400

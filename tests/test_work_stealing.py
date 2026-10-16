@@ -74,3 +74,21 @@ def test_proof_options_reach_proof_phase_leaves_only(best_known):
     with pytest.raises(ValueError, match="no_such_option"):  # a bad option name must fail loudly
         P._solve_leaf([], 1.0, 0, time.time(), True, 0, -np.inf)
     P._W.clear()
+
+
+def _priority_after_lowering():
+    P._lower_priority()
+    import psutil
+    return psutil.Process().nice()
+
+
+def test_lower_priority_really_lowers_the_process_priority():
+    """E36: a low-priority worker runs below normal priority (checked in a separate process)."""
+    psutil = pytest.importorskip("psutil")
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(1, mp_context=mp.get_context("spawn")) as ex:
+        nice = ex.submit(_priority_after_lowering).result()
+    if psutil.WINDOWS:
+        assert nice == psutil.BELOW_NORMAL_PRIORITY_CLASS
+    else:
+        assert nice >= 10

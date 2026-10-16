@@ -91,7 +91,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           sb_candidates: int = 0, lns_big: bool = True, warm_start: str | None = None,
           lns_after_rampup: bool = False, lns_patience: float | None = None, lns_alns: bool = True,
           lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
-          proof_options: dict | None = None, concurrent_proofs: bool = True) -> Result:
+          proof_options: dict | None = None, concurrent_proofs: bool = True,
+          low_priority_proofs: bool = True) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -101,7 +102,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     concurrent_proofs (E34): with a warm incumbent, LP-bound every other last year first and start the proofs of the
     ones the LP cannot prune at once, in background threads with their own worker pools, alongside the main last year
     (whose tree leaves workers idle in its tail). Sound: a last year proven against the warm incumbent stays proven when
-    the main solve improves the incumbent, and a better incumbent can only shrink the set of survivors."""
+    the main solve improves the incumbent, and a better incumbent can only shrink the set of survivors.
+    low_priority_proofs (E36): run those concurrent proofs below normal OS priority, so they use only idle cores."""
     t0 = time.time()
     inst = I.load(name)
     log: list[str] = []
@@ -174,7 +176,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                     solve_parallel, name, L, workers, n_leaves, encoding, balance, time_limit,
                     incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                     rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
-                    steal_after=steal_after, race_after=race_after, proof_options=proof_options)
+                    steal_after=steal_after, race_after=race_after, proof_options=proof_options,
+                    low_priority=low_priority_proofs)
             tpe.shutdown(wait=False)
             log.append(f"concurrent proofs started for L={early} at {time.time() - t0:.1f}s")
             others_idle = [L for L in others if L not in background]  # idle LP trees skip the ones being proven

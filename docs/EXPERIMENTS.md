@@ -512,3 +512,31 @@ Most tuning since E10 used the six CPO scenarios, so the defaults were rechecked
 * **Pack regression** (slow suite, `tests/test_regression.py`): all 4 public instances prove their known optima within their limits (163 s in total).
 * **Held-out perturbed set** (exp06, 12 instances; each project's spend and PV scaled by independent factors in [0.9, 1.1]): **12 of 12 proven** within 300 s with the default pipeline (0.6-1.2 s growth/no-penalty; 4.9-12.7 s growth/penalised and one raw/penalised; 27-203 s raw/no-penalty; 102-166 s for the other two raw/penalised). Every returned schedule re-scores exactly under the exact evaluator.
 * **Verdict**: no sign of over-fitting to the CPO scenarios.
+
+### E35: engine racing and branching quality on the hard s2000_P50 plateau leaves
+
+The same 7 hard leaves (E31), as identical MPS files (E33); 120 s, one thread, objective limit = the best-known schedule.
+
+| Strategy | Leaves closed within 120 s |
+|---|---|
+| HiGHS, seed 0 / best of 3 seeds | 1 / 1 of 7 |
+| SCIP 10, best of 3 seeds | 2 of 7 |
+| **Best of both engines (racing)** | **3 of 7** |
+| SCIP, full strong branching | **0 of 7** (only 150-340 nodes each) |
+| SCIP, pseudocost branching | 1 of 7 |
+
+* Engine diversity beats seed diversity (3 of 7 against 1), but 4 of the 7 leaves resist every engine, seed and branching rule, and those set the proof's critical path, so engine racing would barely shorten s2000_P50.
+* Even full strong branching (the best possible branching decisions) closes none: **the plateau is not a branching-quality problem**. A SCIP branching callback with capopt's rule has no headroom; dropped on evidence.
+* The outer LP-tree proof engine (GAP_ANATOMY #2) is also re-ranked down: E29's data shows it about as fast as HiGHS leaves on P95's L = 43 (383 s against 350-480 s) and slower on cfadsds_P50.
+
+### E36: run the concurrent proofs below normal OS priority (now the default)
+
+* E34's concurrent L = 42 proof competed with the main L = 43 tree for cores, which slowed L = 43 (390-575 s). With `low_priority_proofs` (default on), the concurrent proof's worker processes run at below-normal OS priority (`SetPriorityClass` on Windows, `os.nice(10)` elsewhere), so they use only the cores the main last year leaves idle. A test confirmed a real bug before any timing: untyped ctypes truncated Windows' pointer-sized process handle, making the call a silent no-op. The handle is now typed, and the call raises if it fails.
+
+| Scenario | Official (sequential) | E34 (concurrent) | **E36 (concurrent, low priority), seeds 0 / 1 / 2** | Median | COPT |
+|---|---|---|---|---|---|
+| cfadsds_P95 | 518 (1.19x) | 433 (1.00x) | 378 / 373 / 475 (L = 42 done at 335-345 s) | **378 (0.88x)** | 433 |
+| cfadsds_P95high | 582 (0.33x) | 555 (0.32x) | 400 / 504 / 518 | **504 (0.29x)** | 1,770 |
+
+* Load: mean outside load 0.28-0.41 cores on the five tagged runs (one had a single 6.7 peak). P95 seed 0 is untagged because the load sampler had died during an app restart; `capopt campaign launch` now warns when the load log is stale.
+* **Verdict**: adopted. On cfadsds_P95, 2 of 3 seeds and the median beat COPT. **Updated KPI: 0.935 overall (a lower bound); CFADS family 0.552**, with the median below COPT's time on all four CFADS scenarios; flat envelope 2.680 (unchanged).
