@@ -48,6 +48,18 @@ RESULTS = ROOT / "benchmarks" / "results"
 LOAD_LOG = ROOT / "private" / "cpo" / "load_log.csv"  # written by an external sampler (see load_tag)
 
 
+def load_log_age(path: Path | str | None = None) -> float | None:
+    """Seconds since the load sampler last wrote a sample; None when there is no load log at all."""
+    path = Path(os.environ.get("CAPOPT_LOAD_LOG", LOAD_LOG) if path is None else path)
+    if not path.exists():
+        return None
+    lines = path.read_text(encoding="utf-8-sig").strip().splitlines()
+    try:
+        return time.time() - float(lines[-1].split(",")[0])
+    except (ValueError, IndexError):
+        return None
+
+
 def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
              mean_limit: float = 1.0, peak_limit: float = 4.0) -> dict[str, Any] | None:
     """Machine load outside capopt during [t_start, t_end], from a CSV of samples

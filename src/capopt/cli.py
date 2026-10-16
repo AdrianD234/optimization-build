@@ -64,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"LAUNCHED {info['campaign']}: {info['total']} runs, runner pid {info['pid']}, heartbeat verified after "
               f"{info['verified_after']:.1f}s. Check with: capopt status {info['campaign']}  |  "
               f"capopt watch {info['campaign']}", flush=True)
+        age = campaign.load_log_age()
+        if age is not None and age > 60:  # the sampler died: these runs would carry no load tag
+            print(f"WARNING: the load log's last sample is {age:.0f}s old; restart the load sampler or these runs "
+                  "will not be load-tagged", flush=True)
         return 0
     if a.cmd in ("status", "watch"):
         cdir = Path(a.campaign) if Path(a.campaign).is_dir() else campaign.campaign_dir(a.campaign, Path(a.root))
