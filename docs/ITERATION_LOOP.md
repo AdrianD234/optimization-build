@@ -141,6 +141,7 @@ Every recommendation in `docs/research/` is tracked here. Status: ✅ done, ◐ 
 | E33 follow-up | Engine racing: HiGHS + SCIP copies of a hard leaf (they closed different leaves in E33) | ❌ | queued after the official KPI: 7 leaves x seeds x both engines; how often does either close |
 | E33 follow-up | SCIP callbacks: capopt's capped strong-branching rule inside the tree; end-of-horizon covering-cut separator | ❌ | strategic; the route to custom node machinery without a HiGHS fork |
 | E33 follow-up | SCIP exact (rational) mode to certify proofs | ❌ | only if audit-grade proofs are needed (Q9) |
+| KPI analysis | Prove the surviving last years concurrently | ✅ | E34: cfadsds_P95 1.19x to 1.00x; now the default |
 
 Queue (cheap and high value first):
 1. CFADS #2(a) more leaves (one flag).

@@ -81,7 +81,7 @@ Validation has moved from perturbed copies of the pack to the Capital Programme 
 | 3 Parallel and primal | **Done for now.** Split-and-solve, re-splitting, ALNS workers with big-project moves and patience, warm start, LNS after the ramp-up (E13-E20) |
 | 4 Bound strengthening | **In progress.** Strong-branching ramp-up with a capped score and automatic k (E11-E23), live bounds and the late cutoff (E1-E2), re-split slices (E21). Root cover cuts help the pack but not CFADS (E22B). Next: the queue in the tracker |
 | 5 Engine work | Not started. The tracker's top fork candidate is a dynamic in-solve cutoff (Q10) |
-| Real data (3a) | **Official KPI (3 seeds, load-tagged, 18/18 clean): 1.007** (a lower bound; parity with COPT). CFADS family **0.62** (faster than COPT on 3 of 4, with the whole range below COPT); flat-envelope family 2.68 (COPT faster: the near-optimal plateau needs node-level machinery, E31/E33). See EXPERIMENTS.md, 'Official KPI' |
+| Real data (3a) | **KPI 0.970** (official 3-seed runs, plus E34 concurrent proofs on the two P95 scenarios; a lower bound since s2000_P50 is unproven). CFADS family **0.58**: faster than COPT on P50 (0.77), P50high (0.48) and P95high (0.32), parity on P95 (1.00). Flat-envelope family 2.68 (COPT faster: the near-optimal plateau needs node-level machinery, E31/E33). See EXPERIMENTS.md |
 | 6 Evolve-a-heuristic | Designed (`docs/research/AI_MATH_RESULTS.md`), not started |
 
 ## 4. Benchmark protocol

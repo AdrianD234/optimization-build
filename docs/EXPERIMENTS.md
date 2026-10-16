@@ -491,3 +491,16 @@ Load: all 18 runs were tagged, with the user's machine quiet. Two were mildly co
   * **CFADS after debt service (4 scenarios): 0.62.** capopt is faster than COPT on three of four, with the whole 3-seed range below COPT's time, and 1.2x on the fourth.
   * **Flat envelope (s2000, 2 scenarios): 2.68.** COPT is clearly faster. The flat envelope leaves a thin near-optimal plateau that only node-level machinery closes (E31, E33).
 * Caveats that favour COPT stay as stated in `ITERATION_LOOP.md`: COPT's times are solver-only after a warm start built in uncounted time, while capopt's are wall-clock including model build, from the CPO's stored schedule.
+
+### E34: prove the surviving last years concurrently (now the default)
+
+* On cfadsds_P95/P95high the time is two proofs back to back, L = 43 (the warm schedule's) then L = 42, while the L = 43 tree ran at about 40% worker utilization. With `concurrent_proofs` (default on; it acts only with a warm incumbent and last years the LP cannot prune), every other last year is LP-bounded first (seconds), and the survivors' proofs start at once in background threads with their own pools. Soundness: a last year proven against the warm incumbent stays proven when the main solve improves the incumbent, and a better incumbent only shrinks the set of survivors. Test: the late-warm-start regression test, with concurrent proofs on, proves the brute-force optimum.
+* **Result** (official KPI setup plus concurrent proofs, 3 seeds; capopt then uses about 18 of 20 cores instead of about 8):
+
+| Scenario | Official (sequential) | E34, seeds 0 / 1 / 2 | Median | COPT |
+|---|---|---|---|---|
+| cfadsds_P95 | 518 / 511 / 531 (median 518, ratio 1.19) | 390 / 575 / 433 (L = 42 done at 306-330 s) | **433 (ratio 1.00)** | 433 |
+| cfadsds_P95high | 582 / 617 / 544 (median 582, ratio 0.33) | 555 / 452 / 595 (L = 42 done at 300-347 s) | **555 (ratio 0.32)** | 1,770 |
+
+* Load: outside load averaged 0.9-1.5 cores during these runs, just over the 1-core threshold, plus one isolated spike of about 18. That is consistent with system overhead from running about 40 solver processes, not outside work.
+* **Verdict**: adopted. cfadsds_P95 moves from 1.19x to parity. The trade-off: the L = 43 proof slows while it shares cores (390-575 s spread). E34 changes nothing on the other four scenarios (no survivors), so the **updated KPI** uses the official rows plus these medians: **overall 0.970 (a lower bound), CFADS family 0.584, flat envelope 2.680**.
