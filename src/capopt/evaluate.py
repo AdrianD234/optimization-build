@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from .instance import Instance
+from .layers import score as score_layers
 
 INF = float("inf")
 
@@ -77,10 +78,18 @@ def evaluate(inst: Instance, starts: np.ndarray | list[int]) -> dict[str, Any]:
         return out
     backlog, tiers, closing = cc
     pv_term = inst.pv_weight * pv_sum
+    layer = 0.0
+    if inst.layers is not None:  # distribution layers (capopt.layers): a hard PV floor or bands, soft shortfalls
+        lay = score_layers(inst, starts, spend)
+        if not lay["feasible"]:
+            out["reason"] = lay["reason"]
+            return out
+        layer = lay["penalty"]
     out.update({
         "feasible": True,
-        "objective": inst.backlog_weight * backlog + tiers - pv_term,
-        "components": {"backlog_units": backlog, "tier_units": tiers, "pv_term": pv_term, "pv_int_sum": pv_sum},
+        "objective": inst.backlog_weight * backlog + tiers - pv_term + layer,
+        "components": {"backlog_units": backlog, "tier_units": tiers, "pv_term": pv_term, "pv_int_sum": pv_sum,
+                       "layer_penalty": layer},
         "last_build_year_index": last,
         "closing_balance_units": closing,
         "spend_units": spend.tolist(),

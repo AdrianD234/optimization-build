@@ -962,7 +962,7 @@ def _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, respl
     best = best_val.value
     dual = min(closed + [best])
     starts = np.array(best_starts[:], dtype=np.int64) if best < np.inf else None
-    proven = dual >= best - rel_gap * abs(best)
+    proven = dual >= (best - rel_gap * abs(best) if best < np.inf else np.inf)  # no schedule: proven if none exists
     mono, run = [], np.inf
     for t, v in sorted(trace):
         if v < run:

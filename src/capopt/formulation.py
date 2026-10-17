@@ -26,6 +26,7 @@ import numpy as np
 
 from .evaluate import evaluate
 from .instance import Instance
+from .layers import ModelRows
 
 INF = highspy.kHighsInf
 
@@ -224,6 +225,7 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
         else:  # cumF - cumspend - sum band <= base  <=>  -cumspend - sum band <= base - cumF
             r = b.row(-INF, float(base[t] - cumF[t]), row_cols, [-1.0] * len(row_cols))
         band_rows.append(r)
+    lrows = ModelRows(b, inst, INF) if inst.layers is not None else None  # distribution layers (capopt.layers)
     options, start_cols = [], []
     for p in range(inst.n):
         ok = inst.allowed[p] + inst.last_nz[p] <= L
@@ -252,6 +254,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
                 costs[jj] += float((x_cost_years[s:L + 1] * np.array([cs[min(t - s, len(cs) - 1)] for t in range(s, L + 1)])).sum())
             if start_rows:
                 e[start_rows[s]] = 1.0
+            if lrows is not None:
+                lrows.entries(p, int(np.nonzero(ok)[0][jj]), int(s), e)
             entries.append(e)
         start_cols.append(_add_start_block(b, encoding, inst.ids[p], opts, costs, entries))
         options.append(opts)
@@ -271,6 +275,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
                     x[band_cols[t][i]] = take
                     excess -= take
         del closing
+        if lrows is not None:
+            lrows.fill(x, starts)
 
     b.auto_scale()
     row_year = {r: t for t, r in enumerate(start_rows)}  # rows tied to one year (for year-block bounds)
@@ -282,6 +288,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
 
 def reference_bigm(inst: Instance) -> Model:
     """The MindOpt reference model with indicators replaced by big-M rows (pulse encoding, all allowed starts)."""
+    if inst.layers is not None:
+        raise NotImplementedError("reference_bigm has no distribution layers; use last_year_model")
     T = inst.T
     b = MipBuilder()
     F = inst.F.astype(float)

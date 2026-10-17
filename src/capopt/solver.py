@@ -157,6 +157,12 @@ def repair_schedule(inst: I.Instance, starts: np.ndarray, time_limit: float = 10
     return None
 
 
+def _cut(best: float, rel_gap: float) -> float:
+    """The pruning cutoff for an incumbent value: +inf without one (inf - rel_gap * inf would be NaN, and every
+    comparison with NaN is False, which pruned every last year when MIP(Lmin) had no schedule at all)."""
+    return best - rel_gap * abs(best) if best < np.inf else np.inf
+
+
 PRESETS: dict[str, dict] = {}  # E37: filled below the pipeline; see docs/EXPERIMENTS.md E37
 
 
@@ -221,7 +227,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
 
     def idle(best: float) -> None:  # LP-bound one more last year while workers are busy
         for L, ev in cancels.items():  # E38: a concurrent proof the improved incumbent makes unnecessary
-            if not ev.is_set() and lp.get(L, -np.inf) >= best - rel_gap * abs(best):
+            if not ev.is_set() and lp.get(L, -np.inf) >= _cut(best, rel_gap):
                 ev.set()
                 log.append(f"L={L}: concurrent proof cancelled, LP-pruned by the improved incumbent at "
                            f"{time.time() - t0:.1f}s")
@@ -229,11 +235,11 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             L = queue.pop(0)
             from .bounds import cash_floor_bound
             floor = cash_floor_bound(inst, L)  # E37: no model build or LP when the cash floor already prunes L
-            lp[L] = floor if floor >= best - rel_gap * abs(best) else max(floor, lp_bound(inst, L))
+            lp[L] = floor if floor >= _cut(best, rel_gap) else max(floor, lp_bound(inst, L))
             return
         if best == np.inf:
             return
-        cut = best - rel_gap * abs(best)
+        cut = _cut(best, rel_gap)
         for L in others:  # E16: grow an LP tree for a last year the root LP could not prune
             if L in tree_pruned or lp.get(L, np.inf) >= cut:
                 continue
@@ -273,7 +279,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         else:
             log.append("warm start: infeasible for this instance, ignored")
     if lp_screen and best_starts is not None:  # E37: bound every last year now; maybe the warm schedule is enough
-        cut = best_obj - rel_gap * abs(best_obj)
+        cut = _cut(best_obj, rel_gap)
         lp.update(screen_last_years(inst, L_order + others, cut, workers, log))
         queue = []
         if min(lp.values()) >= cut:
@@ -295,7 +301,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         from concurrent.futures import ThreadPoolExecutor
         while queue:  # LP-bound every other last year now (seconds), so the survivors are known up front
             idle(best_obj)
-        early = [L for L in others if lp[L] < best_obj - rel_gap * abs(best_obj)]
+        early = [L for L in others if lp[L] < _cut(best_obj, rel_gap)]
         if early:
             import threading
             tpe = ThreadPoolExecutor(len(early))
@@ -333,12 +339,12 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         dual = min(dual, r.dual_bound)
     # finish bounding the remaining last years, then solve any that could still hold a better schedule
     if lp_screen and queue:  # E37: the rest in threads, floor first (a cold start has no cutoff for the screen early)
-        lp.update(screen_last_years(inst, queue, best_obj - rel_gap * abs(best_obj), workers, log))
+        lp.update(screen_last_years(inst, queue, _cut(best_obj, rel_gap), workers, log))
         queue = []
     while queue:
         idle(best_obj)
     idle_cancel_check = [L for L, ev in cancels.items() if not ev.is_set()
-                         and lp.get(L, -np.inf) >= best_obj - rel_gap * abs(best_obj)]
+                         and lp.get(L, -np.inf) >= _cut(best_obj, rel_gap)]
     for L in idle_cancel_check:  # E38: the final incumbent prunes it: stop it instead of waiting for it
         cancels[L].set()
         log.append(f"L={L}: concurrent proof cancelled, LP-pruned by the final incumbent")
@@ -359,11 +365,15 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         if r.objective < best_obj:
             best_obj, best_starts = r.objective, r.starts
         dual = min(dual, r.dual_bound)
-    survivors = [L for L in others if L not in background and lp[L] < best_obj - rel_gap * abs(best_obj)]
+    survivors = [L for L in others if L not in background and lp[L] < _cut(best_obj, rel_gap)]
     for L in others:
         if L not in background:
             status[L] = "pruned (LP)" if L not in survivors else status.get(L, "open")
-    for L in survivors:
+    for L in sorted(survivors, key=lambda L: lp[L]):
+        if lp[L] >= _cut(best_obj, rel_gap):  # an earlier survivor's schedule prunes it now
+            status[L] = "pruned (LP)"
+            dual = min(dual, lp[L])
+            continue
         if time.time() - t0 >= time_limit:  # E37: out of time: report it open (its LP bound) instead of spawning a pool
             status[L] = "time limit"
             proven_all = False

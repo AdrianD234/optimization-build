@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from . import layers as _layers
+
 PACK = Path(__file__).resolve().parents[2] / "benchmark_pack"
 HOLDOUT = PACK.parent / "benchmarks" / "holdout"  # perturbed instances, written by `capopt holdout`
 INSTANCE_NAMES = ["P100_raw_penalised", "P100_growth_penalised", "P100_raw_nopenalty", "P100_growth_nopenalty"]
@@ -32,6 +34,7 @@ class Instance:
     raw: dict[str, Any] = field(repr=False)
     cash_cap: np.ndarray | None = None  # optional hard cap on the closing balance (units) in every year before the
     #                                     last build year (the final year's balance is released, never capped)
+    layers: Any = None  # optional distribution layers (capopt.layers.Layers): PV floor, shortfall rows, hard bands
 
     @property
     def n(self) -> int:
@@ -88,6 +91,7 @@ def from_dict(raw: dict[str, Any]) -> Instance:
         cash_cap=None if raw.get("cash_cap_units") is None else np.broadcast_to(
             np.asarray(raw["cash_cap_units"], dtype=np.float64), (int(raw["T"]),)).copy(),
         raw=raw,
+        layers=_layers.parse(raw.get("layers"), len(P), int(raw["T"])),
     )
 
 
