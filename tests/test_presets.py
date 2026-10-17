@@ -158,3 +158,13 @@ def test_concurrent_proofs_of_a_poor_warm_plan_are_cancelled_not_waited_for(tmp_
     assert r.proven and r.dual_bound <= bf + 1e-9 * abs(bf)
     assert r.objective - bf <= 1e-2 * abs(r.objective) + 1e-6
     assert any("concurrent proofs started" in line for line in r.log)
+
+def test_cold_primal_options_keep_the_result_exact(tmp_path):
+    """E39 options (LP-disagreement LNS, LNS deferred to the first incumbent, primal-leaf HiGHS settings) change the
+    search, never the answer."""
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2, slice_seconds=0.5,
+                     lns_rins=True, lns_wait_incumbent=True, primal_options={"mip_heuristic_effort": 0.3})
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)

@@ -668,3 +668,47 @@ The user shares this machine; a parallel build pushed the outside load to 2.5-8 
 
 * **Why**: the warm 0.5% time is the strong-branching ramp-up itself (1 expansion on s2000, 9 pruned nodes on s1750_P95). Fixing columns at their LP values leaves those LPs' cost and the child bounds almost unchanged; the fixed columns were not the ones branching moved. Cold runs gain nothing either: the fixing needs an incumbent at ramp-up time, which a cold start does not have.
 * **Verdict**: no gain; `rc_fix` stays opt-in and off. The warm 0.5% lever is the ramp-up's worker count (E42).
+
+### E39: the cold-start primal side
+
+* **Where the time goes**: every cold E37 run is primal-limited. The certificate lands seconds after the incumbent first gets within about 0.5% of the optimum, which takes 10-50 s (more on s1750). The incumbent comes from two sources:
+  * **leaves**: HiGHS on ramp-up leaves, in 4-15 s;
+  * **LNS**: 60-90% of its sub-MIPs improve the schedule, a sign that the incumbent is far from locally optimal and that each step is small.
+* **Ideas tried** (cold, `0.5pct`, the 6 hardest scenarios, 120 s cap, load-clean):
+  * `lns_rins`: an LP-disagreement neighbourhood that frees projects whose start is a year or more from the root LP's mean start, or that the LP splits.
+  * `primal_options`: HiGHS settings for leaves that search without a cutoff, e.g. `mip_heuristic_effort` 0.3.
+  * `lns_wait_incumbent`: LNS workers join the tree until the first schedule exists.
+  * `lns_max_size`: the neighbourhood size cap, 45 before; E39b, cap 90.
+  * 12 or 16 LNS workers instead of 8.
+* **Offline probes that failed** (not run as campaigns):
+  * Seeding from a softer-penalty model (tiers x0.1 or x0.01): 4-27% off on the true objective.
+  * HiGHS leaves on s1750_P95 stay 9% off after 20 s whatever the settings: its root node alone takes over 10 s, so the 10 s leaf slices never get past it, and LNS does all the work there.
+* **Result** (shifted geometric mean of per-scenario medians, seconds; every run of the E39 campaigns pooled; unproven runs count at 120 s):
+
+| Arm | Seeds per scenario | Geo. mean | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P95 | s1750_P50 | s1750_P95 |
+|---|---|---|---|---|---|---|---|---|
+| base (E37 preset, 8 LNS) | 7 | 49.5 | 25 | 29 | 31 | 41 | 108 | >120 |
+| 12 LNS workers | 5 | **44.0** | 37 | 24 | 19 | 44 | 64 | >120 |
+| 12 LNS + heuristic effort 0.3 | 3 | 42.4 | 22 | 40 | 19 | 55 | 42 | >120 |
+| heuristic effort 0.3 | 2 | 46.0 | 31 | 25 | 27 | 41 | 76 | >120 |
+| neighbourhood cap 90 | 2 | 46.2 | 26 | 26 | 27 | 45 | 86 | 118 |
+| LP-disagreement neighbourhood | 2 | 50.2 | 24 | 32 | 25 | 46 | 119 | >120 |
+| LNS waits for the first schedule | 2 | 55.3 | 35 | 35 | 42 | 48 | 88 | >120 |
+| 16 LNS workers | 3 | 56.2 | 24 | 33 | 28 | 82 | >120 | >120 |
+
+* Single-seed screens were misleading: 12 LNS workers looked 22% faster on 2 seeds and 1% faster on the next 3. Only the pooled 5-seed figure (-11%) is worth acting on. More LNS helps up to a point (12 helps, 16 hurts: too few tree workers). The other ideas are within seed noise.
+* **Verdict**: the presets move to 12 LNS workers. The other options stay opt-in. The cold primal side remains the open problem: s1750_P95 needs more than 120 s for 0.5% under every arm, and the cold medians move only about 10% under every knob tried. A step change would need a new kind of primal method; candidates are compound cash-balanced moves (the parked H10 theme), or a donor plan from a sibling scenario (H14).
+
+### E42: start LNS after the ramp-up (warm 0.5%)
+
+* **Hypothesis**: warm 0.5% on the envelope scenarios is all strong-branching ramp-up (E40), which ran on the 12 workers the 8 LNS workers left free, while LNS adds nothing to a near-certified warm plan.
+* **Result** (warm, `0.5pct` with 8 LNS, 3 seeds, tight ranges):
+
+| Scenario | LNS from the start | LNS after the ramp-up | + 8 candidates |
+|---|---|---|---|
+| s2000_P50high | 2.0 | 1.9 | 1.9 |
+| s2000_P50 | 2.0 | 1.9 | 1.9 |
+| s1750_P50 | 3.8 | 3.5 | 2.9 |
+| s1750_P95 | 6.8 | 5.7 | 5.9 |
+
+* **Verdict**: adopted: both presets start LNS after the ramp-up (about 10% warm). It costs a cold start nothing, since there is no incumbent to search around before the ramp-up ends. With E39 the presets are now 12 LNS workers, started after the ramp-up; the final table below measures them.
