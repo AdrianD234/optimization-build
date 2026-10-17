@@ -256,3 +256,36 @@ def test_load_log_age(tmp_path):
     log.write_text("\n".join(["unix_time,other_cores,python_cores,excel_cores,free_gb", f"{now - 300},0.5,0.0,0.0,8.0"])
                    + "\n", encoding="utf-8")
     assert 295 <= C.load_log_age(log) <= 400
+
+
+def test_wait_quiet_waits_for_a_quiet_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(C.os, "cpu_count", lambda: 20)
+    log = tmp_path / "load.csv"
+    rows = ["unix_time,other_cores,python_cores,excel_cores,free_gb"]
+    rows += [f"{t},{3.0 if t < 160 else 0.4},0.0,0.0,8.0" for t in range(100, 260, 10)]  # busy until t = 150
+    log.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    clock = {"t": 150.0}
+    waited = C.wait_quiet(1.0, 30.0, 600.0, log, poll_s=10.0, sleep=lambda s: clock.update(t=clock["t"] + s),
+                          clock=lambda: clock["t"])
+    assert waited == 40.0  # the first 30 s window without a busy sample: (160..190] once the clock reaches 190
+    clock["t"] = 150.0
+    assert C.wait_quiet(1.0, 30.0, 20.0, log, poll_s=10.0, sleep=lambda s: clock.update(t=clock["t"] + s),
+                        clock=lambda: clock["t"]) == 20.0  # gives up after max_wait_s
+    assert C.wait_quiet(path=tmp_path / "missing.csv") == pytest.approx(0.0, abs=0.5)
+    clock["t"] = 10_000.0  # a stale log (sampler dead): no way to tell, so don't wait
+    assert C.wait_quiet(1.0, 30.0, 600.0, log, sleep=lambda s: None, clock=lambda: clock["t"]) == 0.0
+
+
+def test_contended_runs_are_rerun(tmp_path):
+    counter = tmp_path / "contended.txt"
+    counter.write_text("2", encoding="utf-8")  # the first two attempts come back contended
+    spec = C.load_spec(write_spec(tmp_path, name="rerun", runner="capopt.campaign:sleep_runner", time_limit=5,
+                                  rerun_contended=3,
+                                  runs=[{"instance": "a", "seconds": 0.01, "contended_file": str(counter)}]))
+    data = C.run(spec, tmp_path / "rerun", heartbeat_s=0.05)
+    run = data["runs"][0]
+    assert run["attempts"] == 3 and run["contended"] is False and data["done"] == 1
+    counter.write_text("9", encoding="utf-8")
+    spec["rerun_contended"] = 1
+    run = C.run(spec, tmp_path / "rerun2", heartbeat_s=0.05)["runs"][0]
+    assert run["attempts"] == 2 and run["contended"] is True  # gives up after its reruns, still flagged

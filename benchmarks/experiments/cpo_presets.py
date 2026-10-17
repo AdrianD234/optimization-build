@@ -23,6 +23,8 @@ CPO = ROOT / "private" / "cpo"
 TIMED = ["s2000_P50high", "s2000_P50", "cfadsds_P50", "cfadsds_P50high", "cfadsds_P95", "cfadsds_P95high"]
 UNTIMED = ["cfads_P50", "cfads_P95", "s1750_P50", "s1750_P95"]
 ALL = TIMED + UNTIMED
+# the user shares this machine: wait for a quiet minute before each run and rerun contended runs (campaign.wait_quiet)
+QUIET = {"quiet": {"max_cores": 1.0, "window_s": 30.0, "max_wait_s": 1800.0}, "rerun_contended": 2}
 
 
 def _arg(flag: str, default: str) -> str:
@@ -48,7 +50,7 @@ def spec(name: str) -> Path:
                                  "label": f"{sc}__{arm}__{mode}__seed{seed}", "time_limit": tl, "options": o})
     out = CPO / "campaigns" / f"{name}.spec.json"
     out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
-                               "out_dir": str(CPO / "results" / name), "runs": runs}, indent=1), encoding="utf-8")
+                               "out_dir": str(CPO / "results" / name), "runs": runs, **QUIET}, indent=1), encoding="utf-8")
     print(f"{out}: {len(runs)} runs")
     return out
 
@@ -80,7 +82,7 @@ def iterate(name: str) -> Path:
                                  "options": dict(opts, seed=0, warm_start=str(ref))})
     out = CPO / "campaigns" / f"{name}.spec.json"
     out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
-                               "out_dir": str(CPO / "results" / name), "runs": runs}, indent=1), encoding="utf-8")
+                               "out_dir": str(CPO / "results" / name), "runs": runs, **QUIET}, indent=1), encoding="utf-8")
     print(f"{out}: {len(runs)} runs")
     return out
 
