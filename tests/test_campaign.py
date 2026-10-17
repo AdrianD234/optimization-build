@@ -289,3 +289,18 @@ def test_contended_runs_are_rerun(tmp_path):
     spec["rerun_contended"] = 1
     run = C.run(spec, tmp_path / "rerun2", heartbeat_s=0.05)["runs"][0]
     assert run["attempts"] == 2 and run["contended"] is True  # gives up after its reruns, still flagged
+
+
+def test_wait_quiet_also_waits_for_commit_memory(tmp_path, monkeypatch):
+    monkeypatch.setattr(C.os, "cpu_count", lambda: 20)
+    log = tmp_path / "load.csv"
+    rows = ["unix_time,other_cores,python_cores,excel_cores,free_gb"] + [f"{t},0.2,0.0,0.0,8.0" for t in range(100, 400, 10)]
+    log.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    clock = {"t": 150.0}
+    mem = iter([2.0, 3.0, 9.0])
+    waited = C.wait_quiet(1.0, 30.0, 600.0, log, poll_s=10.0, sleep=lambda s: clock.update(t=clock["t"] + s),
+                          clock=lambda: clock["t"], min_commit_gb=8.0, commit_gb=lambda: next(mem))
+    assert waited == 20.0
+    assert C.wait_quiet(1.0, 30.0, 600.0, log, sleep=lambda s: None, clock=lambda: 150.0, min_commit_gb=8.0,
+                        commit_gb=lambda: None) == 0.0  # not Windows: no commit figure, no wait
+    assert C.available_commit_gb() is None or C.available_commit_gb() > 0

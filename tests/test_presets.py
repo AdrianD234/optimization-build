@@ -136,3 +136,25 @@ def test_repair_keeps_a_previous_plan_after_an_edit(instances, best_known):
     assert fixed is not None and evaluate(edited, fixed)["feasible"]
     assert (fixed != st).sum() <= inst.n // 2
     assert "repaired" in log[-1]
+
+
+def test_concurrent_proofs_of_a_poor_warm_plan_are_cancelled_not_waited_for(tmp_path):
+    """E38: a poor warm plan leaves other last years unpruned, so their proofs start concurrently. Once the main
+    solve's better schedule LP-prunes them they are cancelled; the result stays certified and correct."""
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, _ = S.brute_force(inst)
+    rng = np.random.default_rng(0)
+    worst, poor = -np.inf, None
+    for _ in range(3000):  # the worst feasible schedule we can find: its LP leaves several last years open
+        st = np.array([rng.choice(a) for a in inst.allowed])
+        ev = evaluate(inst, st)
+        if ev["feasible"] and ev["objective"] > worst:
+            worst, poor = ev["objective"], st
+    warm = tmp_path / "poor.json"
+    warm.write_text(json.dumps({"starts": inst.starts_to_dict(poor)}), encoding="utf-8")
+    r = solver.solve(str(path), workers=3, time_limit=60, preset="1pct", n_leaves=4, warm_start=str(warm))
+    assert r.proven and r.dual_bound <= bf + 1e-9 * abs(bf)
+    assert r.objective - bf <= 1e-2 * abs(r.objective) + 1e-6
+    assert any("concurrent proofs started" in line for line in r.log)

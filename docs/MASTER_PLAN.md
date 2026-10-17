@@ -83,7 +83,7 @@ Validation has moved from perturbed copies of the pack to the Capital Programme 
 | 5 Engine work | Not started. The tracker's top fork candidate is a dynamic in-solve cutoff (Q10) |
 | Real data (3a) | **KPI 0.934** (official 3-seed runs, plus E34/E36 low-priority concurrent proofs on the two P95 scenarios; a lower bound since s2000_P50 is unproven). CFADS family **0.55**: the median beats COPT on all four (P50 0.77, P50high 0.48, P95 0.88, P95high 0.29). Flat-envelope family 2.68 (COPT faster: the near-optimal plateau resists branching, engines and parallelism, E31/E33/E35). See EXPERIMENTS.md |
 | 6 Evolve-a-heuristic | Designed (`docs/research/AI_MATH_RESULTS.md`), not started |
-| Certified-gap presets (2026-10-17) | **E37 adopted.** `solve(preset="1pct" / "0.5pct")` and `capopt solve --preset`: stop at a certified gap over every last year. Medians over the 10 CPO scenarios, 3 seeds: **warm** 1% in 0.2-0.4 s (screen alone), 0.5% in 0.2-6.4 s; **cold** 1% in 9-70 s, 0.5% in 9-120+ s (primal-limited; E39 next). Track and queue in ITERATION_LOOP.md |
+| Certified-gap presets (2026-10-17) | **E37 adopted.** `solve(preset="1pct" / "0.5pct")` and `capopt solve --preset`: stop at a certified gap over every last year. Medians over the 10 CPO scenarios, 3 seeds: **warm** 1% in 0.2-0.4 s (screen alone), 0.5% in 0.2-6.4 s; **cold** 1% in 9-70 s, 0.5% in 9-120+ s (primal-limited; E39 next). **Model iteration (E38)**: edit 1-5 projects and re-solve from the previous plan (repaired automatically): median 1.6 s to 1%, 3.0 s to 0.5%. Track and queue in ITERATION_LOOP.md |
 
 ## 4. Benchmark protocol
 

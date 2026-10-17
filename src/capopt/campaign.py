@@ -93,12 +93,35 @@ def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
     return {"samples": len(rows), "other_cores_mean": round(mean, 2), "other_cores_peak": round(peak, 2),
             "free_gb_min": round(min(r[1] for r in rows), 1), "contended": mean > mean_limit or peak > peak_limit,
             "dropped": dropped}
+def available_commit_gb() -> float | None:
+    """Commit memory still available on Windows (GlobalMemoryStatusEx: ullAvailPageFile), in GB; None elsewhere.
+    Spawning a worker pool fails with "the paging file is too small" when this runs out (seen 2026-10-17 while the
+    user's other applications held 58 of 67 GB)."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    class MemStatus(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    st = MemStatus()
+    st.dwLength = ctypes.sizeof(MemStatus)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+        return None
+    return st.ullAvailPageFile / 2 ** 30
+
+
 def wait_quiet(max_cores: float = 1.0, window_s: float = 30.0, max_wait_s: float = 1800.0,
                path: Path | str | None = None, poll_s: float = 10.0, sleep: Callable[[float], None] = time.sleep,
-               clock: Callable[[], float] = time.time) -> float:
+               clock: Callable[[], float] = time.time, min_commit_gb: float = 0.0,
+               commit_gb: Callable[[], float | None] = available_commit_gb) -> float:
     """Block until every load-log sample of the last `window_s` seconds shows at most `max_cores` busy outside capopt
     (the user shares this machine), or `max_wait_s` has passed. Returns the seconds waited. Returns at once when there
-    is no load log or its last sample is over a minute old (no way to tell; the run's load tag will say so)."""
+    is no load log or its last sample is over a minute old (no way to tell; the run's load tag will say so).
+    min_commit_gb: also wait until at least this much commit memory is available (Windows; ignored elsewhere)."""
     path = Path(os.environ.get("CAPOPT_LOAD_LOG", LOAD_LOG) if path is None else path)
     cores = os.cpu_count() or 1
     t0 = clock()
@@ -116,7 +139,8 @@ def wait_quiet(max_cores: float = 1.0, window_s: float = 30.0, max_wait_s: float
         if not rows or now - rows[-1][0] > 60:
             return now - t0
         recent = [c for t, c in rows if t >= now - window_s and c <= cores]  # drop counter artefacts (load_tag)
-        if recent and max(recent) <= max_cores:
+        mem = commit_gb() if min_commit_gb > 0 else None
+        if recent and max(recent) <= max_cores and (mem is None or mem >= min_commit_gb):
             return now - t0
         if now - t0 >= max_wait_s:
             return now - t0
@@ -416,7 +440,10 @@ def run(spec: dict, cdir: Path, heartbeat_s: float = HEARTBEAT_S, out_dir: Path 
                     outcome = runner(item, float(item.get("time_limit", spec["time_limit"])), out)  # per-run override
                 except Exception as exc:  # noqa: BLE001 - record and continue with the next run
                     outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-                if not (outcome.get("contended") and attempts <= reruns):
+                # rerun a contended run, and one whose worker pool died for lack of memory (another app's peak)
+                starved = outcome.get("status") == "failed" and any(
+                    k in outcome.get("error", "") for k in ("BrokenProcessPool", "MemoryError", "paging file"))
+                if not ((outcome.get("contended") or starved) and attempts <= reruns):
                     break
             if quiet or reruns:
                 outcome = dict(outcome, attempts=attempts, waited_for_quiet=round(waited, 1))

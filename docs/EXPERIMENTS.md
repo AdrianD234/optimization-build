@@ -618,3 +618,37 @@ The user's priorities changed: proofs to 1e-5 are set aside, and day-to-day work
 ### Campaign infrastructure: wait for a quiet machine, rerun contended runs
 
 The user shares this machine; a parallel build pushed the outside load to 2.5-8 cores during the first E37 screen. A campaign spec can now say `"quiet": {"max_cores": 1.0, "window_s": 30, "max_wait_s": 1800}`. Before each run the runner waits until every load-log sample of the last 30 s shows at most 1 core busy outside capopt. With `"rerun_contended": n`, a run whose load tag comes back contended is rerun up to n times (tested). In E37 this waited 37 min in total and reran 10 runs; none of the 120 kept results is contended. Runs shorter than the 10 s sampling interval carry no load samples.
+
+### E38: one model iteration (Q8): edit 1-5 projects, re-solve from the previous plan
+
+* **Hypothesis**: the real loop is "change some data, re-solve". A previous plan is almost as good as a CPO plan, so a re-solve should cost about what a warm solve costs (under a second at 1%), provided the old plan survives the edit.
+* **Setup**: `synthetic.perturb_projects`. For each of the 10 scenarios, k = 1, 3 or 5 random projects get spend and PV scaled by independent factors in [0.8, 1.2], and their earliest allowed start delayed by 1-2 years (a slipped approval). Each run warm-starts from the unedited scenario's stored plan. Presets `1pct`/`0.5pct`, 120 s cap, one perturbation per cell, load-clean (`cpo_presets.py iterate`).
+* **The previous plan almost never survives an edit.** In 29 of 30 edited scenarios it was infeasible (a negative balance after a spend increase, or a start no longer allowed); the old pipeline then dropped it and started cold. New `solver.repair_schedule` (on by default, `repair_warm`):
+  * Moves disallowed starts to the nearest allowed year.
+  * If the balance still goes negative, re-times only the projects active around the first negative year, everything else fixed (a sub-MIP at the plan's own last year, widening the window until it finds a schedule).
+  * Polishes to a 1e-4 gap within 5 s. A first version stopped at a 1e-2 sub-MIP gap and lost 0.5-1% of the plan's value; it also used a later last year, which charges holding cost for extra years.
+  * Repair median 1.3 s.
+* **Fixes found on the way**:
+  * **Concurrent proofs of a poor plan's other last years** (E34) were launched against the repaired plan and then waited for, even after LNS had found a schedule good enough to LP-prune them. On s1750_P95 the run ended "not certified" at a real gap of 0.62%. Such proofs are now cancelled as soon as the improved incumbent LP-prunes their last year (tested), and leaves stop with their master.
+  * **Worker memory**: numpy's OpenBLAS reserved about 620 MB of commit per worker process (per-thread buffers for 20 cores), about 13 GB per pool. Pools crashed with "the paging file is too small" while other applications held most of the memory. Workers now start with one BLAS thread: 29 MB each.
+  * Campaigns also wait for at least 8 GB of free commit memory, and rerun a run whose pool died for lack of memory.
+* **Result**: seconds from the unedited plan to a certified schedule for the edited scenario (`s` = certified by the screen right after the repair, no MIP; `>` = not by 120 s):
+
+`1pct`:
+
+| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 7.2 | 16.5 | 5.4s | 5.4s | 4.1s | 3.0s | 1.4s | 3.0s | 20.6 | 54.8 |
+| 3 | 4.6s | 1.1s | 1.6s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 1.4s | 47.2 |
+| 5 | 1.0s | 1.3s | 1.3s | 1.1s | 1.6s | 1.2s | 1.0s | 0.9s | 1.7s | 29.4 |
+
+`0.5pct`:
+
+| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 16.9 | >120 | 5.4s | 17.5 | 4.1s | 3.0s | 1.4s | 3.0s | 26.9 | 54.4 |
+| 3 | 6.2 | 2.8 | 1.5s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 4.7 | 120.6 |
+| 5 | 2.6 | 3.0 | 1.3s | 1.1s | 1.5s | 1.1s | 1.0s | 0.9s | 5.3 | 110.1 |
+
+* Median over the 30 edits: **1.6 s to 1%** (24 of 30 certified by the screen after the repair) and **3.0 s to 0.5%**. The slow cells are edits the local repair cannot absorb, such as s2000_P50 with one project whose spend increase pushes the earliest feasible last year from 30 to 31. There the repaired plan starts 1-5% off and LNS has to close the rest, like a cold start (E39).
+* **Verdict**: plan repair adopted (default on). A model iteration typically re-solves to 1% in about 1-5 s.
