@@ -127,3 +127,28 @@ def test_kernel_refuses_layers():
     from capopt.heuristics import kernel as K
     with pytest.raises(NotImplementedError):
         K.pack(I.from_dict(layered(0)))
+
+
+def test_best_first_with_a_poor_warm_plan_stays_exact(tmp_path):
+    """E44: best_first reorders the last years after the screen; a poor warm plan still ends at the optimum."""
+    import json
+    raw = layered(3)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, _ = S.brute_force(inst)
+    rng = np.random.default_rng(1)
+    worst, poor = -np.inf, None
+    for _ in range(20000):
+        st = np.array([rng.choice(a) for a in inst.allowed])
+        ev = evaluate(inst, st)
+        if ev["feasible"] and ev["objective"] > worst:
+            worst, poor = ev["objective"], st
+    warm = tmp_path / "poor.json"
+    warm.write_text(json.dumps({"starts": inst.starts_to_dict(poor)}), encoding="utf-8")
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, warm_start=str(warm), lp_screen=True,
+                     best_first=True)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, warm_start=str(warm), preset="1pct",
+                     warm_triage=True)
+    assert r.proven and r.objective - bf <= 1e-2 * abs(r.objective) + 1e-6 and r.dual_bound <= bf + 1e-9 * abs(bf)
+    assert any("warm triage" in line for line in r.log)

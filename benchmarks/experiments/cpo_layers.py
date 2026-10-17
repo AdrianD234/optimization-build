@@ -3,6 +3,7 @@
     python benchmarks/experiments/cpo_layers.py pvstar <scenario> [...]           PV* from the 0.5pct preset (cached)
     python benchmarks/experiments/cpo_layers.py build <scenario> <variant> [...]  write a layered instance
     python benchmarks/experiments/cpo_layers.py spec <name> --variants v1,v2 --scenarios s1,s2 [--presets 1pct,0.5pct]
+           [--arms {"triage": {"warm_triage": true}}]
            [--modes warm,cold] [--seeds 0,1] [--time-limit 120]
     python benchmarks/experiments/cpo_layers.py summary <name> [<name> ...]     times + layer metrics per cell
     python benchmarks/experiments/cpo_layers.py frontier <name>                 PV retained vs layer metric per price
@@ -38,8 +39,10 @@ from capopt.evaluate import evaluate  # noqa: E402
 CPO = Path(os.environ.get("CAPOPT_CPO", ROOT / "private" / "cpo"))
 ATTR = CPO / "attributes"
 OUT = CPO / "instances" / "layers"
-QUIET = {"quiet": {"max_cores": 1.0, "window_s": 30.0, "max_wait_s": 1800.0, "min_commit_gb": 8.0},
-         "rerun_contended": 2}
+# OneDrive's sync holds about 1 core busy on this machine since 2026-10-18, so the presets campaigns' 1-core gate never
+# opens: wait for at most 2 outside cores, don't rerun (load tags still record the outside load per run)
+QUIET = {"quiet": {"max_cores": 2.0, "window_s": 30.0, "max_wait_s": 1800.0, "min_commit_gb": 8.0},
+         "rerun_contended": 0}
 D5 = ["HSP", "INC", "ENV", "ECO", "RES"]
 CLASS_SPANS = [(0, 2), (3, 5), (6, 8), (9, 11)]
 CLASS_WEIGHTS = [8.0, 4.0, 2.0, 1.0]
@@ -114,6 +117,18 @@ def region_shares(raw: dict, A: dict, basis: str) -> tuple[dict[str, list[int]],
     return gov, {k: pool * v for k, v in sh.items()}
 
 
+def dim_weights(A: dict, d: str) -> np.ndarray:
+    pv0 = np.array([p["pv0_dim"][d] for p in A["projects"]])
+    oth = np.array([np.mean([p["pv0_dim"][e] for e in D5 if e != d]) for p in A["projects"]])
+    return LY.dimension_weights(pv0, oth)
+
+
+def weighted_dim(raw: dict, starts: dict, A: dict, d: str, w: np.ndarray) -> float:
+    """The dimension score (the dimension-scoring objective's PV): sum_p w_p PV_d(p, start_p)."""
+    return float(sum(w[i] * A["projects"][i]["pv_dim"][d][p["allowed_starts"].index(int(starts[p["id"]]))]
+                     for i, p in enumerate(raw["projects"])))
+
+
 def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
     raw = base_raw(sc)
     A = attrs(sc)
@@ -125,9 +140,7 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
         bits = part.split("-")
         if bits[0] == "dim":
             d, f = bits[1], float(bits[2][1:]) / 100.0
-            pv0 = np.array([p["pv0_dim"][d] for p in A["projects"]])
-            oth = np.array([np.mean([p["pv0_dim"][e] for e in D5 if e != d]) for p in A["projects"]])
-            w = LY.dimension_weights(pv0, oth)
+            w = dim_weights(A, d)
             pv_obj = [[int(round(w[i] * v)) for v in p["pv_dim"][d]] for i, p in enumerate(A["projects"])]
             layers["pv_floor"] = {"pv": [p["pv_int"] for p in raw["projects"]], "min": int(math.ceil(f * ps["pv_int"]))}
         elif bits[0] == "cls":
@@ -161,6 +174,30 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
     return new, path
 
 
+def build_polish(sc: str, variant: str, starts: dict, delta: float = 0.0) -> tuple[Path, Path]:
+    """Lexicographic polish (stage 2) of a dimension-scoring plan: maximise Total PV (the base objective, carry kept)
+    subject to dimension score >= (1 - delta) x the stage-1 plan's score. Other layers of the variant are kept. Returns
+    the instance path and a warm-start file holding the stage-1 plan (feasible by construction at delta >= 0)."""
+    raw = base_raw(sc)
+    A = attrs(sc)
+    d = next(b.split("-")[1] for b in variant.split("+") if b.startswith("dim-"))
+    w = dim_weights(A, d)
+    score = weighted_dim(raw, starts, A, d, w)
+    layered = json.loads((OUT / f"CPO233_{sc}__{variant}.json").read_text(encoding="utf-8"))
+    lay = {k: v for k, v in layered.get("layers", {}).items() if k != "pv_floor"}
+    lay["pv_floor"] = {"pv": [[int(round(w[i] * v)) for v in A["projects"][i]["pv_dim"][d]]
+                              for i in range(len(raw["projects"]))],
+                       "min": int(math.floor((1 - delta) * score)) - len(raw["projects"])}  # rounding slack
+    new = LY.with_layers(raw, lay, f"CPO233_{sc}__{variant}__polish")
+    path = OUT / f"CPO233_{sc}__{variant}__polish.json"
+    path.write_text(json.dumps(new, separators=(",", ":")), encoding="utf-8")
+    ev = evaluate(I.from_dict(new), I.from_dict(new).starts_from_dict(starts))
+    warm = path.with_name(path.stem + "_ref.json")
+    warm.write_text(json.dumps({"starts": starts, "source": "stage-1 plan", "evaluator_objective": ev["objective"],
+                                "feasible_under_layers": ev["feasible"]}), encoding="utf-8")
+    return path, warm
+
+
 # ------------------------------------------------------------------------------------------------------------ metrics
 
 def metrics(sc: str, starts: dict) -> dict:
@@ -174,6 +211,8 @@ def metrics(sc: str, starts: dict) -> dict:
     out = {"pv_retained": pv_of(raw, starts) / ps["pv_int"]}
     for d in D5:
         out[f"pv_{d}"] = pv_of(raw, starts, dim=d, A=A) / pv_of(raw, ps["starts"], dim=d, A=A)
+        w = dim_weights(A, d)
+        out[f"score_{d}"] = weighted_dim(raw, starts, A, d, w) / weighted_dim(raw, ps["starts"], A, d, w)
     spend = np.zeros((inst.n, inst.T))
     for p, s in enumerate(st):
         spend[p, s:s + len(inst.spend[p])] = inst.spend[p]
@@ -217,20 +256,24 @@ def spec(name: str) -> Path:
     modes = _arg("--modes", "warm,cold").split(",")
     seeds = [int(s) for s in _arg("--seeds", "0").split(",")]
     tl = float(_arg("--time-limit", "120"))
+    arms = json.loads(_arg("--arms", '{"": {}}'))  # arm name -> extra solve options; labels carry "<variant>@<arm>"
     paths = {(sc, v): build_variant(sc, v)[1] for sc in scenarios for v in variants}
     runs = []
     for seed in seeds:
         for sc in scenarios:
             for v in variants:
                 for mode in modes:
-                    for pr in presets:
+                    for pr, (arm, extra) in [(p, a) for p in presets for a in arms.items()]:
                         path = paths[(sc, v)]
                         ref = path.with_name(path.stem + "_ref.json")
-                        o = {"preset": pr, "seed": seed}
+                        label = f"{sc}__{v}{'@' + arm if arm else ''}__{pr}__{mode}__seed{seed}"
+                        if (CPO / "results" / name / f"{label}.json").exists():
+                            continue  # done in an earlier launch of this campaign
+                        o = {"preset": pr, "seed": seed, **extra}
                         if mode == "warm":
                             o["warm_start"] = str(ref)
                         runs.append({"instance": str(path), "reference": str(ref), "time_limit": tl, "options": o,
-                                     "label": f"{sc}__{v}__{pr}__{mode}__seed{seed}"})
+                                     "label": label})
     (CPO / "campaigns").mkdir(exist_ok=True)
     out = CPO / "campaigns" / f"{name}.spec.json"
     out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
@@ -253,7 +296,7 @@ def summary(names: list[str]) -> None:
     for (sc, v, pr, mode, _), rec in _records(names):
         cells.setdefault((sc, v, mode, pr), []).append(rec)
     print(f"{'scenario':12s} {'variant':26s} {'mode':4s} {'preset':6s} {'n':>2s} {'med s':>7s} {'range':>13s} "
-          f"{'PV ret':>7s} {'dimPV':>11s} {'cls w1/w2 %':>12s} {'bandv':>5s} {'reg cost c1/c2 %':>17s} "
+          f"{'PV ret':>7s} {'dimPV / score':>23s} {'cls w1/w2 %':>12s} {'bandv':>5s} {'reg cost c1/c2 %':>17s} "
           f"{'reg blend c1/c2 %':>17s} cont")
     for (sc, v, mode, pr), recs in sorted(cells.items()):
         ts = [r["seconds"] if r["proven"] else r["time_limit"] for r in recs]
@@ -262,12 +305,13 @@ def summary(names: list[str]) -> None:
         m = [metrics(sc, r["starts"]) for r in recs if r.get("starts")]
         med = lambda xs: statistics.median(xs) if xs else float("nan")  # noqa: E731
         dims = [d for d in D5 if f"dim-{d}" in v]
-        dim = f"{dims[0]} {med([x[f'pv_{dims[0]}'] for x in m]) * 100 - 100:+.2f}%" if dims else ""
+        dim = (f"{dims[0]} {med([x[f'pv_{dims[0]}'] for x in m]) * 100 - 100:+.2f}% "
+               f"sc {med([x[f'score_{dims[0]}'] for x in m]) * 100 - 100:+.2f}%") if dims else ""
         def wp(key, i):
             return med([x[key][i]["worst_pct"] for x in m])
         print(f"{sc:12s} {v:26s} {mode:4s} {pr:6s} {len(ts):2d} {'>' if bad * 2 >= len(ts) else ' '}{med(ts):6.1f} "
               f"{min(ts):6.1f}-{max(ts):6.1f}{'*' if bad else ' '} {med([x['pv_retained'] for x in m]) * 100:6.2f}% "
-              f"{dim:>11s} {wp('class', 0):5.1f}/{wp('class', 1):5.1f} {med([x['class_band_violations'] for x in m]):5.0f} "
+              f"{dim:>23s} {wp('class', 0):5.1f}/{wp('class', 1):5.1f} {med([x['class_band_violations'] for x in m]):5.0f} "
               f"{wp('region_cost', 0):8.1f}/{wp('region_cost', 1):7.1f} {wp('region_blend', 0):8.1f}/{wp('region_blend', 1):7.1f} "
               f"{cont}")
 

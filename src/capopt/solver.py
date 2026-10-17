@@ -177,7 +177,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           low_priority_proofs: bool = True, lp_screen: bool = False, preset: str | None = None,
           repair_warm: bool = True, rc_fix: bool = False, lns_rins: bool = False,
           primal_options: dict | None = None, lns_wait_incumbent: bool = False, lns_max_size: int = 45,
-          root_extend: bool = False) -> Result:
+          root_extend: bool = False, best_first: bool = False, warm_triage: bool = False) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -196,6 +196,10 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     rc_fix (E40): tighten start windows by reduced-cost fixing at the target cutoff before each tree (rc_fixings).
     lns_rins (E39): LNS also frees the projects where the incumbent and the root LP disagree.
     root_extend (E43): a leaf still in HiGHS's root node at the end of its slice gets a longer slice, not a re-split.
+    best_first (E44): after the screen, solve the surviving last year with the lowest bound first, not the warm plan's
+    own (a plan made for another objective, e.g. Total PV under dimension scoring, often ends in a worse last year).
+    warm_triage (E44): when the screen finds the warm plan more than 3 x rel_gap from its bound, switch best_first on
+    and the concurrent proofs off (proving every surviving last year against a weak plan swamps the machine).
     lns_max_size (E39): cap on the projects one LNS neighbourhood frees (45 before E39).
     lns_wait_incumbent (E39): on a cold start the LNS workers join the tree until the first schedule appears.
     primal_options (E39): HiGHS options for the leaves that search without the incumbent cutoff.
@@ -291,9 +295,21 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             L_order.remove(L)                              # it joins the pruned ones (status, bound) at the end
             others.append(L)
             log.append(f"L={L}: pruned by the screen")
+        far = (best_obj - min(lp.values())) / abs(best_obj)
+        if warm_triage and far > 3 * rel_gap:  # E44: a warm plan far from certified (made for another objective)
+            best_first, concurrent_proofs = True, False
+            log.append(f"warm triage: the warm plan is {far:.2%} from the screen bound: best-first, no concurrent proofs")
         if not L_order:  # solve the most promising surviving last year instead
             L_order = [min((L for L in others if lp[L] < cut), key=lambda L: lp[L])]
             others.remove(L_order[0])
+        elif best_first:  # E44: a warm plan from another objective can end in the wrong last year
+            Lb = min((L for L in L_order + others if lp[L] < cut), key=lambda L: lp[L])
+            if Lb != L_order[0]:
+                others.remove(Lb)
+                others.append(L_order[0])
+                log.append(f"best-first: L={Lb} (screen bound {lp[Lb]:.6g}) before the warm plan's L={L_order[0]} "
+                           f"({lp[L_order[0]]:.6g})")
+                L_order = [Lb]
     proven_all = True
     background: dict = {}  # E34: L -> future of its concurrent proof
     cancels: dict = {}  # E38: L -> event that stops its concurrent proof
