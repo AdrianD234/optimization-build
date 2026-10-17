@@ -25,7 +25,8 @@ TIMED = ["s2000_P50high", "s2000_P50", "cfadsds_P50", "cfadsds_P50high", "cfadsd
 UNTIMED = ["cfads_P50", "cfads_P95", "s1750_P50", "s1750_P95"]
 ALL = TIMED + UNTIMED
 # the user shares this machine: wait for a quiet minute before each run and rerun contended runs (campaign.wait_quiet)
-QUIET = {"quiet": {"max_cores": 1.0, "window_s": 30.0, "max_wait_s": 1800.0}, "rerun_contended": 2}
+QUIET = {"quiet": {"max_cores": 1.0, "window_s": 30.0, "max_wait_s": 1800.0, "min_commit_gb": 8.0},
+         "rerun_contended": 2}
 
 
 def _arg(flag: str, default: str) -> str:
