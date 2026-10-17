@@ -595,7 +595,25 @@ The user's priorities changed: proofs to 1e-5 are set aside, and day-to-day work
 
 * Warm 1% is certified by the screen alone on every scenario (no MIP, no worker pool), in a third of a second. Warm 0.5% needs a few strong-branching LP nodes on the envelope scenarios (2-6 s); CFADS stays at the screen. The achieved gaps sit just under the target, as expected from a solver that stops there.
 * Cold is 9-70 s at 1% and 9-120+ s at 0.5%. Both s1750 scenarios miss 0.5% within 120 s, so the cold primal side (E39) is the main lever left.
+* **0.1% (logged, not a preset)**: the `0.5pct` settings with `rel_gap` 1e-3, 1 seed, 300 s cap (`>` = not certified by then):
+
+| Scenario | warm, 0.1% | cold, 0.1% |
+|---|---|---|
+| s2000_P50high | 17.9 | 258.7 |
+| s2000_P50 | 20.6 | 207.3 |
+| cfadsds_P50 | 9.9 | 270.1 |
+| cfadsds_P50high | 6.5 | 154.8 |
+| cfadsds_P95 | 300.0 | >300.0* |
+| cfadsds_P95high | 287.9 | >300.0* |
+| cfads_P50 | 0.2 | 11.5 |
+| cfads_P95 | 0.3 | 35.2 |
+| s1750_P50 | 23.7 | >300.0* |
+| s1750_P95 | >300.0* | >300.0* |
+| **shifted geo. mean** | 34.2 | 163.2 |
+
+  Warm 0.1% takes 0.2-24 s except cfadsds_P95/P95high (288-300 s) and s1750_P95 (not by 300 s). The presets' 4-candidate strong branching is too weak there; the CFADS rule (k = 16, E22-E23) and the concurrent proofs are what closed those gaps in the 1e-5 runs. A `0.1pct` preset would need `sb_candidates=-1`; not pursued, since 0.1% is not a target.
 * **Verdict**: adopted as the named presets. The proof-oriented defaults are unchanged.
+* **Fix found on the way**: once the time limit had passed, `solve` still solved each surviving last year in turn, each with a new pool and an untimed LP ramp-up; one 0.1% cold run overran by more than 10 minutes. Survivors are now reported open with their LP bound once time is up, and the ramp-up stops at the deadline.
 
 ### Campaign infrastructure: wait for a quiet machine, rerun contended runs
 
