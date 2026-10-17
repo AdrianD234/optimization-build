@@ -134,14 +134,15 @@ def repair_schedule(inst: I.Instance, starts: np.ndarray, time_limit: float = 10
     bad = np.nonzero(net < 0)[0]
     year = int(bad[0]) if len(bad) else int(st.max())
     ends = st + inst.last_nz
-    L = max(inst.min_last_year(), int(ends.max()))
-    for r in (2, 4, 8, inst.T):
+    Lp = max(inst.min_last_year(), int(ends.max()))
+    # the plan's own last year first (a later one charges holding cost for extra years and skews the objective)
+    for L, r in [(Lp, 2), (Lp, 4), (Lp, 8), (Lp, inst.T), (min(inst.T - 1, Lp + 2), inst.T)]:
         free = moved | ((st <= year + r) & (ends >= year - r))
-        model = last_year_model(inst, min(inst.T - 1, L + r), "step", "cumulative")
-        h = _highs(model, _fix_others(st, free), False, max(0.5, time_limit - (time.time() - t0)))
+        model = last_year_model(inst, L, "step", "cumulative")
+        h = _highs(model, _fix_others(st, free), False, max(0.5, min(5.0, time_limit - (time.time() - t0))))
         if h is None:
             continue
-        h.setOptionValue("mip_rel_gap", 1e-2)
+        h.setOptionValue("mip_rel_gap", 1e-4)  # E38: polish, not just repair (1e-2 lost 0.5-1% of the plan's value)
         h.run()
         sol = h.getSolution()
         if sol.value_valid:
