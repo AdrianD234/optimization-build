@@ -277,7 +277,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         if min(lp.values()) >= cut:
             log.append("the screen certifies the warm schedule: no MIP solved")
             status = {L: "pruned (LP)" for L in lp}
-            return Result(name, best_obj, inst.starts_to_dict(best_starts), True, min(lp.values()),
+            return Result(name, float(best_obj), inst.starts_to_dict(best_starts), True, float(min(lp.values())),
                           time.time() - t0, trace, status, log)
         for L in [L for L in L_order if lp[L] >= cut]:  # the warm schedule's own last year is settled already:
             L_order.remove(L)                              # it joins the pruned ones (status, bound) at the end
@@ -395,8 +395,9 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         ev = evaluate(inst, best_starts)
         assert ev["feasible"] and abs(ev["objective"] - best_obj) <= 1e-9 * abs(best_obj)
         starts = inst.starts_to_dict(best_starts)
-    return Result(name, best_obj, starts, proven_all and dual >= best_obj - rel_gap * abs(best_obj), dual,
-                  time.time() - t0, mono, status, log)
+    # plain Python types: a numpy bound (the cash floor) used to make `proven` a numpy bool, which json cannot write
+    return Result(name, float(best_obj), starts, bool(proven_all and dual >= best_obj - rel_gap * abs(best_obj)),
+                  float(dual), time.time() - t0, mono, status, log)
 
 
 def solve_sequential(name: str, encoding: str = "step", balance: str = "cumulative", time_limit: float = 900.0,

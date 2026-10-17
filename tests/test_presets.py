@@ -177,3 +177,15 @@ def test_subset_projects_scales_funding_with_spend(instances):
     share = sum(sum(p["spend_S"]) for p in sub["projects"]) / sum(sum(p["spend_S"]) for p in raw["projects"])
     assert sum(sub["funding_S"]) == pytest.approx(share * sum(raw["funding_S"]), rel=1e-3)
     I.from_dict(sub)
+
+
+def test_results_carry_plain_python_types(tmp_path, best_known):
+    """A numpy bound once made `proven` a numpy bool, and the campaign's json.dumps of the record failed."""
+    name = "P100_growth_penalised"
+    warm = tmp_path / "warm.json"
+    warm.write_text(json.dumps({"starts": best_known[name]["starts"]}), encoding="utf-8")
+    for kw in ({"preset": "1pct"}, {"rel_gap": 1e-2, "lns_workers": 1, "n_leaves": 4}):
+        r = solver.solve(name, workers=2, time_limit=60, warm_start=str(warm), **kw)
+        assert type(r.proven) is bool and type(r.dual_bound) is float and type(r.objective) is float
+        json.dumps({"proven": r.proven, "dual": r.dual_bound, "objective": r.objective})
+    assert type(cash_floor_bound(I.load(name), 19)) is float

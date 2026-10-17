@@ -727,3 +727,46 @@ The user shares this machine; a parallel build pushed the outside load to 2.5-8 
 * **Finding: time does not grow with the number of projects; smaller programmes are harder.** At equal overall tightness, a smaller programme has fewer, relatively bigger pieces to pack into each year's cash envelope. The ten largest projects average 2.4x the peak annual funding at n = 100 against 1.94x in the full programme (cfadsds_P95), so near-optimal schedules are rarer and the primal side (E39) takes longer. One random subset per size, so single cells are noisy, but the direction is consistent across all four scenarios.
 * **Q1 (every scenario)**: the presets have now been measured on all 10 extracted scenarios that are in scope (E37 and the final table below). The s1500 pair stays set aside by the user's decision; the H17 policy variants are not presets' targets.
 * **Verdict**: no change. For capacity planning, expect a run's time to depend on how lumpy the projects are relative to annual funding, not on how many there are.
+
+## Final table: certified-gap presets (2026-10-17)
+
+The `1pct` and `0.5pct` presets as merged after E37-E42: lp screen; 24 leaves with 4-candidate strong branching; 12 LNS workers started after the ramp-up; 10 s slices; leaf cutoff after 10 s; plan repair for warm starts. All 10 CPO scenarios in scope, warm (from the CPO's stored plan) and cold, 3 seeds each, 300 s cap, every run load-clean (120 runs, 1 automatic rerun). Seconds until `solve` returns a schedule certified within the target over every last year: the median, with the seed range for the cold columns (warm ranges are within 0.1 s, except s1750_P50 1% 0.2-0.3).
+
+| Scenario | warm, 1% | warm, 0.5% | cold, 1% (range) | cold, 0.5% (range) |
+|---|---|---|---|---|
+| s2000_P50high | 0.4 | 1.9 | 14.8 (14.4-19.9) | 22.1 (21.8-34.4) |
+| s2000_P50 | 0.4 | 1.9 | 15.2 (15.0-20.5) | 22.4 (20.2-47.5) |
+| cfadsds_P50 | 0.2 | 0.2 | 18.8 (14.7-25.9) | 26.7 (18.6-31.4) |
+| cfadsds_P50high | 0.3 | 0.3 | 18.1 (18.0-18.4) | 25.8 (18.4-26.3) |
+| cfadsds_P95 | 0.3 | 0.3 | 16.1 (15.4-17.7) | 34.2 (28.6-59.4) |
+| cfadsds_P95high | 0.3 | 0.3 | 14.6 (14.1-17.6) | 40.2 (27.9-56.3) |
+| cfads_P50 | 0.2 | 0.2 | 7.3 (4.3-7.6) | 7.8 (6.6-8.3) |
+| cfads_P95 | 0.3 | 0.2 | 11.5 (10.4-12.2) | 12.0 (10.6-14.3) |
+| s1750_P50 | 0.3 | 3.5 | 27.8 (24.4-28.7) | 77.7 (38.2-174.7) |
+| s1750_P95 | 0.4 | 5.6 | >300 (202.3->300) | >300 (104.8->300) |
+| **shifted geo. mean** (unproven at 300) | 0.3 | 1.3 | 22.7 | 34.8 |
+
+* **Warm** (a stored plan): **1% in 0.2-0.4 s on every scenario**, certified by the screen alone (no MIP, no worker pool). **0.5% in 0.2-0.3 s** on the CFADS family and **1.9-5.6 s** on the flat envelope (a few strong-branching nodes).
+* **Model iteration** (E38: edit 1-5 projects, re-solve from the previous plan, repaired): median **1.6 s to 1%** and **3.0 s to 0.5%**.
+* **Cold** (no plan): **1% in 7-28 s** on 9 of 10 scenarios, **0.5% in 8-78 s** on 9 of 10. Cold is limited by finding a good schedule, and s1750_P95 is the outlier: its leaves never get past HiGHS's root node, and LNS alone reaches 1% after 40 s to more than 300 s depending on the seed (E39).
+* **Against E37** (same protocol, 120 s cap for comparability; shifted geometric means): cold 1% 22.7 -> 20.0 s, cold 0.5% 38.5 -> 31.0 s, warm 0.5% 1.5 -> 1.3 s, warm 1% unchanged at 0.3 s. Without s1750_P95, cold improves by about 21% at both targets.
+* **0.1%** (logged with the E37 settings, 1 seed): warm 0.2-24 s on 7 of 10 (about 300 s or more on cfadsds_P95/P95high and s1750_P95); cold 12-270 s or more than 300 s.
+* **Before/after: the proof-oriented defaults with only `rel_gap` set to the target** (16 LNS workers after the ramp-up, automatic strong branching, quick try, 60 s slices; 1 seed, 120 s cap, load-clean). These already run on today's code, with its honest bounds, gap-aware pruning and plan repair, so the gap to the presets understates the full gain:
+
+| Scenario | warm, 1% | warm, 0.5% | cold, 1% | cold, 0.5% |
+|---|---|---|---|---|
+| s2000_P50high | 2.2 | 3.8 | 18.3 | 17.2 |
+| s2000_P50 | 2.1 | 3.6 | 21.1 | 20.2 |
+| cfadsds_P50 | 1.9 | 1.9 | 46.3 | 48.7 |
+| cfadsds_P50high | 2.0 | 2.0 | 42.8 | 43.8 |
+| cfadsds_P95 | 2.8 | 2.7 | 72.4 | 86.3 |
+| cfadsds_P95high | 2.9 | 2.9 | 70.8 | >120.0* |
+| cfads_P50 | 1.2 | 1.3 | 18.2 | 18.0 |
+| cfads_P95 | 1.6 | 1.6 | 33.0 | 34.2 |
+| s1750_P50 | 1.9 | 5.0 | 22.5 | 30.0 |
+| s1750_P95 | 4.2 | 13.6 | >120.0* | >120.0* |
+| **shifted geo. mean** | 2.2 | 3.5 | 39.5 | 44.0 |
+
+  Shifted geometric means, presets against these defaults (120 s cap): warm 1% **0.3 vs 2.2 s**, warm 0.5% **1.3 vs 3.5 s**, cold 1% **20.0 vs 39.5 s**, cold 0.5% **31.0 vs 44.0 s**. The defaults spend 1-3 s warm on process start-up and serial LP bounds that the presets' screen avoids. Cold, their 16-candidate strong-branching ramp-up on CFADS costs 40-80 s before any leaf runs.
+* **Bug found on the way**: a bound from the cash floor could be a numpy float, which made `Result.proven` a numpy bool; the campaign's JSON writer then failed (7 baseline runs). Results now carry plain Python types (tested).
+* **Stopping point**: E39-E42 tried every remaining lever on the list. The only changes beyond seed noise were 12 LNS workers (cold) and LNS after the ramp-up (warm), both adopted. Window tightening (E40), the LP-disagreement neighbourhood, primal-leaf settings, bigger neighbourhoods and deferring LNS all stayed within noise. Further cold gains need a new primal method (cash-balanced compound moves, H10; a donor plan from a sibling scenario, H14); that is research, not tuning.
