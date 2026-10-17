@@ -140,11 +140,29 @@ def table(name: str, arms: list[str], scenarios: list[str] = ALL) -> str:
     return "\n".join(lines)
 
 
+
+def iter_table(name: str, arm: str, ks: tuple[str, ...] = ("k1", "k3", "k5")) -> str:
+    """E38 markdown: rows = edited projects (k), columns = scenarios; seconds to the arm's certified gap from the
+    unedited plan (`>` = not by the cap, `s` = certified by the screen alone after the repair)."""
+    cells: dict[tuple[str, str], str] = {}
+    for f in (CPO / "results" / name).glob(f"*__{arm}__iter__seed0.json"):
+        r = json.loads(f.read_text(encoding="utf-8"))
+        sc, k, _ = f.stem.split("__")[0].rsplit("-", 2)
+        screen = any("certifies" in line for line in r["log"])
+        cells[(sc, k)] = f"{r['seconds']:.1f}{'s' if screen else ''}" if r["proven"] else f">{r['time_limit']:.0f}"
+    lines = ["| Projects edited | " + " | ".join(ALL) + " |", "|" + "---|" * (len(ALL) + 1)]
+    for k in ks:
+        lines.append(f"| {k[1:]} | " + " | ".join(cells.get((sc, k), "-") for sc in ALL) + " |")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "spec":
         spec(sys.argv[2])
     elif sys.argv[1] == "iterate":
         iterate(sys.argv[2])
+    elif sys.argv[1] == "iter-table":
+        print(iter_table(sys.argv[2], _arg("--arm", "p1")))
     elif sys.argv[1] == "table":
         print(table(sys.argv[2], _arg("--arms", "p1,p05").split(","), _arg("--scenarios", ",".join(ALL)).split(",")))
     else:
