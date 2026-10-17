@@ -212,6 +212,11 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     tree_pruned: set[int] = set()
 
     def idle(best: float) -> None:  # LP-bound one more last year while workers are busy
+        for L, ev in cancels.items():  # E38: a concurrent proof the improved incumbent makes unnecessary
+            if not ev.is_set() and lp.get(L, -np.inf) >= best - rel_gap * abs(best):
+                ev.set()
+                log.append(f"L={L}: concurrent proof cancelled, LP-pruned by the improved incumbent at "
+                           f"{time.time() - t0:.1f}s")
         if queue:
             L = queue.pop(0)
             from .bounds import cash_floor_bound
@@ -277,20 +282,23 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
             others.remove(L_order[0])
     proven_all = True
     background: dict = {}  # E34: L -> future of its concurrent proof
+    cancels: dict = {}  # E38: L -> event that stops its concurrent proof
     if concurrent_proofs and best_starts is not None and others:
         from concurrent.futures import ThreadPoolExecutor
         while queue:  # LP-bound every other last year now (seconds), so the survivors are known up front
             idle(best_obj)
         early = [L for L in others if lp[L] < best_obj - rel_gap * abs(best_obj)]
         if early:
+            import threading
             tpe = ThreadPoolExecutor(len(early))
             for L in early:
+                cancels[L] = threading.Event()
                 background[L] = tpe.submit(
                     solve_parallel, name, L, workers, n_leaves, encoding, balance, time_limit,
                     incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                     rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
                     steal_after=steal_after, race_after=race_after, proof_options=proof_options,
-                    low_priority=low_priority_proofs)
+                    low_priority=low_priority_proofs, cancel=cancels[L])
             tpe.shutdown(wait=False)
             log.append(f"concurrent proofs started for L={early} at {time.time() - t0:.1f}s")
             others_idle = [L for L in others if L not in background]  # idle LP trees skip the ones being proven
@@ -319,9 +327,21 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         queue = []
     while queue:
         idle(best_obj)
+    idle_cancel_check = [L for L, ev in cancels.items() if not ev.is_set()
+                         and lp.get(L, -np.inf) >= best_obj - rel_gap * abs(best_obj)]
+    for L in idle_cancel_check:  # E38: the final incumbent prunes it: stop it instead of waiting for it
+        cancels[L].set()
+        log.append(f"L={L}: concurrent proof cancelled, LP-pruned by the final incumbent")
     for L, fut in background.items():  # E34: collect the concurrent proofs
         r = fut.result()
         tree_pruned.discard(L)
+        if cancels[L].is_set():  # E38: settled by its LP bound; whatever the cancelled proof reached is not needed
+            status[L] = "pruned (LP)"
+            dual = min(dual, lp[L])
+            trace += r.trace
+            if r.objective < best_obj:
+                best_obj, best_starts = r.objective, r.starts
+            continue
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

@@ -348,6 +348,8 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
             e.data_in.user_interrupt = True
         elif steal is not None and steal[slot]:
             e.data_in.user_interrupt = True
+        elif _W["stop"].value:  # E38: the master has finished or was cancelled: this leaf's result is not needed
+            e.data_in.user_interrupt = True
 
     h.cbMipImprovingSolution.subscribe(on_improve)
     h.cbMipInterrupt.subscribe(on_interrupt)
@@ -518,7 +520,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_alns: bool = False, lns_first: float = 0.0,
                    steal_after: float | None = None, race_after: float | None = None,
                    max_racers: int = 4, proof_options: dict | None = None,
-                   low_priority: bool = False) -> ParallelResult:
+                   low_priority: bool = False, cancel=None) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -549,6 +551,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         running copy has run at least this many seconds, up to `max_racers` copies per group. The first copy to finish the subtree
         (optimal, pruned, infeasible) closes it and the others are stopped; a group ending open is re-split or closed
         only when its last copy ends, with the best bound any copy reached. None = off.
+    cancel (E38): a threading.Event; once set, the master stops at its next loop and returns what it has (a concurrent
+        proof that an improved incumbent made unnecessary).
     low_priority (E36): the worker processes run below normal OS priority (used for concurrent proofs of other last
         years, so the main last year keeps the cores it needs).
     proof_options (E30): HiGHS options set on proof-phase leaves only (those launched with the incumbent cutoff), e.g.
@@ -681,6 +685,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         races = racer_wins = 0
         racers: set = set()
         while heap or any(not groups[rv[6]]["closed"] for rv in running.values()):
+            if cancel is not None and cancel.is_set():
+                log.append(f"cancelled at {time.time() - t0:.1f}s")
+                break
             for f in [f for f in lns if f.done()]:
                 lns.remove(f)
                 trace.extend(f.result()["found"])
