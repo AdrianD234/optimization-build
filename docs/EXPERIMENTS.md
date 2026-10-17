@@ -712,3 +712,18 @@ The user shares this machine; a parallel build pushed the outside load to 2.5-8 
 | s1750_P95 | 6.8 | 5.7 | 5.9 |
 
 * **Verdict**: adopted: both presets start LNS after the ramp-up (about 10% warm). It costs a cold start nothing, since there is no incumbent to search around before the ramp-up ends. With E39 the presets are now 12 LNS workers, started after the ramp-up; the final table below measures them.
+
+### E41: scaling with programme size (Q7)
+
+* **Setup**: `synthetic.subset_projects` keeps n random projects of a scenario (n = 100, 150, 200; the full programme has 233) and scales every year's funding by the kept projects' share of total spend, so overall cash tightness is preserved. Scenarios: s2000_P50, cfadsds_P50, cfadsds_P95, s1750_P95. Cold, both presets, 1 seed, 120 s cap, load-clean (24 runs). A warm arm (the full plan restricted to the subset and repaired) was dropped part-way: with funding rescaled, that plan is a poor start for the subset (75-120+ s), so it measures nothing useful. The full-size column is E37's median.
+
+| Scenario | 100, 1% | 100, 0.5% | 150, 1% | 150, 0.5% | 200, 1% | 200, 0.5% | 233 (E37), 1% / 0.5% |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | 47.7 | 55.9 | 50.0 | 50.5 | 10.0 | 36.9 | 15.8 / 41.4 |
+| cfadsds_P50 | >120 | >120 | 21.4 | 35.3 | 16.1 | 13.7 | 32.0 / 35.4 |
+| cfadsds_P95 | 99.8 | >120 | >120 | >120 | 120.1 | >120 | 22.6 / 48.8 |
+| s1750_P95 | >120 | >120 | >120 | >120 | >120 | >120 | 70.5 / >120 |
+
+* **Finding: time does not grow with the number of projects; smaller programmes are harder.** At equal overall tightness, a smaller programme has fewer, relatively bigger pieces to pack into each year's cash envelope. The ten largest projects average 2.4x the peak annual funding at n = 100 against 1.94x in the full programme (cfadsds_P95), so near-optimal schedules are rarer and the primal side (E39) takes longer. One random subset per size, so single cells are noisy, but the direction is consistent across all four scenarios.
+* **Q1 (every scenario)**: the presets have now been measured on all 10 extracted scenarios that are in scope (E37 and the final table below). The s1500 pair stays set aside by the user's decision; the H17 policy variants are not presets' targets.
+* **Verdict**: no change. For capacity planning, expect a run's time to depend on how lumpy the projects are relative to annual funding, not on how many there are.

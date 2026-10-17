@@ -15,12 +15,13 @@ results stay under private/ (gitignored); only aggregates go into the docs.
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CPO = ROOT / "private" / "cpo"
+CPO = Path(os.environ.get("CAPOPT_CPO", ROOT / "private" / "cpo"))  # a worktree has no private/: point it here
 TIMED = ["s2000_P50high", "s2000_P50", "cfadsds_P50", "cfadsds_P50high", "cfadsds_P95", "cfadsds_P95high"]
 UNTIMED = ["cfads_P50", "cfads_P95", "s1750_P50", "s1750_P95"]
 ALL = TIMED + UNTIMED
@@ -141,6 +142,50 @@ def table(name: str, arms: list[str], scenarios: list[str] = ALL) -> str:
 
 
 
+def scale(name: str) -> Path:
+    """E41 (Q7): random project subsets of each scenario (funding scaled by the subset's spend share), solved cold and
+    warm from the full plan restricted to the subset (repaired by the solver). Writes the subset instances and a
+    reference file per subset (the restricted plan, repaired, as "starts" and its objective)."""
+    from capopt import instance as I
+    from capopt import solver, synthetic
+    from capopt.evaluate import evaluate
+    arms = json.loads(_arg("--arms", "{}"))
+    scenarios = _arg("--scenarios", ",".join(ALL)).split(",")
+    sizes = [int(n) for n in _arg("--sizes", "100,150,200").split(",")]
+    modes = _arg("--modes", "warm,cold").split(",")
+    tl = float(_arg("--time-limit", "120"))
+    d = CPO / "instances" / "scale"
+    d.mkdir(parents=True, exist_ok=True)
+    runs = []
+    for sc in scenarios:
+        raw = json.loads((CPO / "instances" / f"CPO233_{sc}.json").read_text(encoding="utf-8"))
+        full = json.loads((CPO / "solutions" / f"CPO233_{sc}_cpo_reference.json").read_text(encoding="utf-8"))
+        for n in sizes:
+            sub = synthetic.subset_projects(raw, n, 0)
+            f = d / f"CPO233_{sc}_n{n}.json"
+            f.write_text(json.dumps(sub), encoding="utf-8")
+            inst = I.from_dict(sub)
+            st = solver._warm_starts(inst, full["starts"])
+            if not evaluate(inst, st)["feasible"]:
+                st = solver.repair_schedule(inst, st, time_limit=30.0)
+            ref = d / f"CPO233_{sc}_n{n}_plan.json"
+            ref.write_text(json.dumps({"starts": inst.starts_to_dict(st), "source": "full plan restricted, repaired",
+                                       "evaluator_objective": evaluate(inst, st)["objective"]}), encoding="utf-8")
+            for mode in modes:
+                for arm, opts in arms.items():
+                    o = dict(opts, seed=0)
+                    if mode == "warm":
+                        o["warm_start"] = str(ref)
+                    runs.append({"instance": str(f), "reference": str(ref), "time_limit": tl, "options": o,
+                                 "label": f"{sc}-n{n}__{arm}__{mode}__seed0"})
+    out = CPO / "campaigns" / f"{name}.spec.json"
+    out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
+                               "out_dir": str(CPO / "results" / name), "runs": runs, **QUIET}, indent=1),
+                   encoding="utf-8")
+    print(f"{out}: {len(runs)} runs")
+    return out
+
+
 def iter_table(name: str, arm: str, ks: tuple[str, ...] = ("k1", "k3", "k5")) -> str:
     """E38 markdown: rows = edited projects (k), columns = scenarios; seconds to the arm's certified gap from the
     unedited plan (`>` = not by the cap, `s` = certified by the screen alone after the repair)."""
@@ -161,6 +206,8 @@ if __name__ == "__main__":
         spec(sys.argv[2])
     elif sys.argv[1] == "iterate":
         iterate(sys.argv[2])
+    elif sys.argv[1] == "scale":
+        scale(sys.argv[2])
     elif sys.argv[1] == "iter-table":
         print(iter_table(sys.argv[2], _arg("--arm", "p1")))
     elif sys.argv[1] == "table":

@@ -79,6 +79,20 @@ def perturb_projects(raw: dict[str, Any], seed: int, k: int, spend: float = 0.2,
     return raw, [raw["projects"][int(i)]["id"] for i in picks]
 
 
+def subset_projects(raw: dict[str, Any], n: int, seed: int) -> dict[str, Any]:
+    """E41: a smaller programme for scaling tests. Keeps n random projects and scales every year's funding by the kept
+    projects' share of total spend (rounded), so cash tightness stays comparable."""
+    rng = np.random.default_rng(seed)
+    raw = copy.deepcopy(raw)
+    keep = sorted(int(i) for i in rng.choice(len(raw["projects"]), size=n, replace=False))
+    total = sum(sum(p["spend_S"]) for p in raw["projects"])
+    raw["projects"] = [raw["projects"][i] for i in keep]
+    share = sum(sum(p["spend_S"]) for p in raw["projects"]) / total
+    raw["funding_S"] = [int(round(f * share)) for f in raw["funding_S"]]
+    raw["name"] = f"{raw.get('name', 'instance')}_n{n}_s{seed}"
+    return raw
+
+
 def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     """Exact optimum by enumeration (tiny instances only)."""
     from .evaluate import objective

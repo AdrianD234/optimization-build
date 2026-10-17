@@ -96,13 +96,13 @@ The CPO model capped project starts at 100 per year, which binds in 2026 on the 
 
 | # | Question | Why it matters | Cheap test | Status |
 |---|---|---|---|---|
-| Q1 | Have we over-fitted to s2000_P50high? | Nearly all tuning used one scenario | Current best config once across all 8 timed scenarios | queued |
+| Q1 | Have we over-fitted to s2000_P50high? | Nearly all tuning used one scenario | Current best config once across all 8 timed scenarios | answered: presets measured on all 10 in-scope scenarios (E37, final table) |
 | Q2 | Does a warm start (H14 donor) close most of the gap to COPT? | COPT's times were warm-started; the real workflow is batches of related scenarios | Seed from a sibling scenario's optimum, then time to 1e-5 | queued |
 | Q3 | What gap is decision-relevant? | 1e-5 of about $95B is about $1M of PV; 0.01% (about $10M) may be enough | User decision, then re-score stored runs | needs the user |
 | Q4 | How different are near-optimal schedules? | Firm vs swappable projects is more useful to planners than one schedule | Pool all schedules within 0.01%; per-project start-year ranges | queued |
 | Q5 | Does the start cap drive the difficulty? | It bound in 2026 | Root LP with and without the cap | answered at the root: no (see above) |
 | Q6 | Where does hardness come from (envelope tightness)? | Slack is about 0.8%; predicts which scenarios will be slow | Envelope sweep $1.5B-$2.5B: root gap and time to 0.1% | queued |
-| Q7 | How does it scale with programme size? | Programmes grow | Project subsets of 150 / 200 / 233 | queued |
+| Q7 | How does it scale with programme size? | Programmes grow | Project subsets of 150 / 200 / 233 | answered (E41): not by size; lumpier programmes are harder |
 | Q8 | How fast is an incremental re-solve? | Re-optimising after a cost update | Perturb 1-5 projects, warm start, time to 0.1% | answered (E38): median 1.6 s to 1%, 3.0 s to 0.5% |
 | Q9 | Is a deterministic mode needed (audit)? | The parallel solver can return different equal-value schedules | User decision | needs the user |
 | Q11 | How much of a commercial solver's time is the end-of-programme logic? | In the original model the last build year is decided inside the MIP (per-year activity binaries, indicators, final-year dividend); capopt removes this by fixing L | MindOpt arms on the 3 screening scenarios (one solve at a time, overnight block): M0 original (done); M-fixL original model with the last year fixed; M2 capopt's fixed-L model; optional M-nodiv (no dividend, funding every year, all years penalised: a policy variant compared on time only) | queued (overnight) |
@@ -163,4 +163,4 @@ The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing no
 | E39 | Cold-start primal: LP-disagreement LNS, primal-leaf HiGHS options, LNS waiting for the first schedule, neighbourhood cap 90, 12/16 LNS workers; offline: soft-tier seeds, leaf settings | ◐ 12 LNS adopted (-11% pooled) | the rest is within seed noise; s1750_P95 cold 0.5% still > 120 s |
 | E42 | Start LNS after the ramp-up (warm strong branching gets all workers) | ✅ adopted | warm 0.5% about -10% on the envelope scenarios |
 | E40 | Start-window tightening (MASTER_PLAN Phase 4): reduced-cost fixing at the target cutoff | ✖ no gain | 64-118 window bounds fixed, warm 0.5% times unchanged; `rc_fix` opt-in |
-| E41 | Scaling (Q7, 150/200/233 projects) and every extracted scenario (Q1) | queued | |
+| E41 | Scaling (Q7, 100/150/200/233 projects) and every extracted scenario (Q1) | ✅ answered | time does not grow with size; smaller programmes at equal tightness are harder (lumpier packing) |
