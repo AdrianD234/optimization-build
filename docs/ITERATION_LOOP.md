@@ -160,6 +160,7 @@ The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing no
 |---|---|---|---|
 | E37 | `1pct` / `0.5pct` presets: cash-floor bound, threaded last-year screen with early exit, gap-aware ramp-up pruning, honest coarse-gap bounds | ✅ adopted | warm 1% 0.2-0.4 s, warm 0.5% 0.2-6.4 s; cold 9-70 s / 9-120+ s |
 | E38 | Incremental re-solve (Q8): perturb 1-5 projects, warm from the previous plan, with plan repair | ✅ repair adopted | median 1.6 s to 1%, 3.0 s to 0.5% over 30 edits; concurrent-proof cancellation; worker memory 620 MB to 29 MB |
-| E39 | Cold-start primal: LP-disagreement LNS (RINS), primal-leaf HiGHS options, LNS-first bursts | queued | the cold rows of E37 are primal-limited |
+| E39 | Cold-start primal: LP-disagreement LNS, primal-leaf HiGHS options, LNS waiting for the first schedule, neighbourhood cap 90, 12/16 LNS workers; offline: soft-tier seeds, leaf settings | ◐ 12 LNS adopted (-11% pooled) | the rest is within seed noise; s1750_P95 cold 0.5% still > 120 s |
+| E42 | Start LNS after the ramp-up (warm strong branching gets all workers) | ✅ adopted | warm 0.5% about -10% on the envelope scenarios |
 | E40 | Start-window tightening (MASTER_PLAN Phase 4): reduced-cost fixing at the target cutoff | ✖ no gain | 64-118 window bounds fixed, warm 0.5% times unchanged; `rc_fix` opt-in |
 | E41 | Scaling (Q7, 150/200/233 projects) and every extracted scenario (Q1) | queued | |

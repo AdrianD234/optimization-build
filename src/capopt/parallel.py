@@ -312,12 +312,13 @@ def _lower_priority() -> None:
 
 
 def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9, live=None,
-          steal=None, proof_options=None, low_priority=False):
+          steal=None, proof_options=None, low_priority=False, primal_options=None):
     if low_priority:
         _lower_priority()
     model = last_year_model(I.load(name), L, encoding, balance)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
-              cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal, proof_options=proof_options or {})
+              cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal, proof_options=proof_options or {},
+              primal_options=primal_options or {})
 
 
 def _load_cuts() -> None:
@@ -359,6 +360,10 @@ def _solve_leaf(splits: list[Split], time_limit: float, seed: int, t0: float, le
         for key, val in _W.get("proof_options", {}).items():  # E30: proof-phase settings (e.g. no heuristics)
             if h.setOptionValue(key, val) != highspy.HighsStatus.kOk:  # highspy only returns an error status
                 raise ValueError(f"HiGHS rejected proof option {key}={val!r}")
+    else:
+        for key, val in _W.get("primal_options", {}).items():  # E39: settings for leaves that search without a cutoff
+            if h.setOptionValue(key, val) != highspy.HighsStatus.kOk:
+                raise ValueError(f"HiGHS rejected primal option {key}={val!r}")
     found = []
 
     def on_improve(e):
@@ -414,14 +419,37 @@ def _fix_others(starts: np.ndarray, free: np.ndarray) -> list[Split]:
     return out
 
 
+def _lp_starts(model: Model) -> tuple[np.ndarray, np.ndarray]:
+    """E39: per project, the root LP's mean start year and whether the LP splits it over several starts (cached per
+    worker)."""
+    cached = _W.get("lp_starts")
+    if cached is not None:
+        return cached
+    h = _lp_solver(model)
+    h.run()
+    x = np.asarray(h.getSolution().col_value)
+    mean, frac = np.zeros(model.inst.n), np.zeros(model.inst.n, dtype=bool)
+    for p, (opts, cols) in enumerate(zip(model.options, model.start_cols)):
+        v = x[cols]
+        cum = np.cumsum(v) if model.encoding == "pulse" else np.append(v, 1.0)
+        pr = np.clip(np.diff(np.concatenate([[0.0], np.minimum(cum, 1.0)])), 0.0, 1.0)
+        mean[p] = float((pr * opts[:len(pr)]).sum() / max(pr.sum(), 1e-12))
+        frac[p] = (pr > 1e-6).sum() > 1
+    _W["lp_starts"] = (mean, frac)
+    return mean, frac
+
+
 def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big: bool = False,
-              patience: float | None = None, alns: bool = False) -> dict:
+              patience: float | None = None, alns: bool = False, rins: bool = False, max_size: int = 45) -> dict:
     """Large-neighbourhood search around the shared incumbent: free a time window or a random set of projects, fix the
     rest, solve the sub-MIP exactly with the incumbent as cutoff. Neighbourhood sizes adapt to sub-MIP outcomes.
     big (E13): add a big-project neighbourhood. Free 1-3 of the largest projects (top 10% by spend) plus a random
     set of others, with a 3x longer sub-MIP limit. The gap anatomy study found the optimum moves a few big, long
     projects by 1-19 years, which the window and hot-spot neighbourhoods rarely allow.
     patience (E18): return to the tree once the shared incumbent has not improved for this many seconds.
+    rins (E39): add an LP-disagreement neighbourhood. Free the projects whose incumbent start is at least a year from
+    the root LP's mean start, or that the LP splits, sampled down to the current size and topped up at random. A poor
+    early incumbent (a cold start) is wrong mostly where it disagrees with the LP.
     alns (E20): pick neighbourhood kinds by adaptive weights (a win scores 10, an exhausted neighbourhood 1, a timeout
     0; weights move 20% toward the latest score, floor 0.2) instead of uniformly. Per-kind stats are returned either way."""
     _load_cuts()
@@ -429,12 +457,13 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
     inst = model.inst
     rng = np.random.default_rng(seed)
     deadline = time.time() + seconds
-    size = 25
+    size = min(25, max_size)
     found, tries, wins = [], 0, 0
     big_ids = np.argsort([-float(sp.sum()) for sp in inst.spend])[:max(5, inst.n // 10)]
     opt_sets = [set(int(x) for x in o) for o in model.options]
     base_kinds = 4 if inst.penalised else 3
-    n_kinds = base_kinds + (1 if big else 0)
+    n_kinds = base_kinds + (1 if big else 0) + (1 if rins else 0)
+    rins_kind = n_kinds - 1 if rins else -1
     weights = np.ones(n_kinds)
     k_tries, k_wins, k_secs = np.zeros(n_kinds, int), np.zeros(n_kinds, int), np.zeros(n_kinds)
     last_val, last_t = _W["best_val"].value, time.time()
@@ -451,7 +480,15 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             cur_val = _W["best_val"].value
         kind = int(rng.choice(n_kinds, p=weights / weights.sum())) if alns else int(rng.integers(n_kinds))
         limit = sub_limit
-        if kind == base_kinds:  # E13: big projects plus a random set of others
+        if kind == rins_kind:  # E39: projects where the incumbent and the root LP disagree
+            mean, frac = _lp_starts(model)
+            cand = np.nonzero((np.abs(cur - mean) >= 1.0) | frac)[0]
+            free = np.zeros(inst.n, dtype=bool)
+            if len(cand):
+                free[rng.choice(cand, size=min(size, len(cand)), replace=False)] = True
+            if free.sum() < size // 2:
+                free[rng.choice(inst.n, size=size // 2, replace=False)] = True
+        elif kind == base_kinds and big:  # E13: big projects plus a random set of others
             free = np.zeros(inst.n, dtype=bool)
             free[rng.choice(inst.n, size=min(size, inst.n), replace=False)] = True
             free[rng.choice(big_ids, size=int(rng.integers(1, 4)), replace=False)] = True
@@ -478,7 +515,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
             a = int(rng.integers(0, int(cur.max()) + 1))
             ends = cur + inst.last_nz
             free = (cur <= a + 2) & (ends >= a)
-        if kind != base_kinds and (free.sum() < 5 or free.sum() > size + 15):
+        if kind not in (base_kinds, rins_kind) and (free.sum() < 5 or free.sum() > size + 15):  # window kinds
             idx = np.nonzero(free)[0] if free.sum() > size + 15 else np.arange(inst.n)
             free = np.zeros(inst.n, dtype=bool)
             free[rng.choice(idx, size=min(size, len(idx)), replace=False)] = True
@@ -513,7 +550,7 @@ def _lns_task(seconds: float, seed: int, t0: float, sub_limit: float = 3.0, big:
         k_secs[kind] += time.time() - ts
         score = 10.0 if won else (1.0 if status == "Optimal" else 0.0)
         weights[kind] = max(0.2, 0.8 * weights[kind] + 0.2 * score)
-        size = min(45, size + 2) if status == "Optimal" else max(12, size - 3)
+        size = min(max_size, size + 2) if status == "Optimal" else max(12, size - 3)
     return {"tries": tries, "wins": wins, "found": found,
             "kinds": [(int(a), int(b), float(c)) for a, b, c in zip(k_tries, k_wins, k_secs)]}
 
@@ -552,7 +589,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_alns: bool = False, lns_first: float = 0.0,
                    steal_after: float | None = None, race_after: float | None = None,
                    max_racers: int = 4, proof_options: dict | None = None,
-                   low_priority: bool = False, cancel=None, rc_fix: bool = False) -> ParallelResult:
+                   low_priority: bool = False, cancel=None, rc_fix: bool = False, lns_rins: bool = False,
+                   primal_options: dict | None = None, lns_wait_incumbent: bool = False,
+                   lns_max_size: int = 45) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -592,6 +631,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     proof_options (E30): HiGHS options set on proof-phase leaves only (those launched with the incumbent cutoff), e.g.
         {"mip_heuristic_effort": 0.0} once the schedule search is LNS's job.
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
+    primal_options (E39): HiGHS options for leaves launched without the incumbent cutoff (the early, schedule-finding
+        ones), e.g. {"mip_heuristic_effort": 0.3}.
+    lns_max_size (E39): the cap on the number of projects an LNS neighbourhood frees (sizes adapt between 12 and it).
+    lns_wait_incumbent (E39): without an incumbent, the LNS workers join the tree until the first schedule appears.
+    lns_rins (E39): LNS also uses the LP-disagreement neighbourhood (see _lns_task).
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
         16 when the root has more than 15 fractional projects, else 4). E12: the
@@ -646,7 +690,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
                                          str(cuts_path) if cut_rounds else None, rel_gap, live, steal,
-                                         proof_options, low_priority))
+                                         proof_options, low_priority, primal_options))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:
@@ -667,8 +711,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         # (on the 233-project CPO models the ramp-up alone takes ~40 s; LNS reaches 1% within ~8 s of starting)
         def start_lns() -> list:  # E37: LNS stops at the solve's time limit too
             secs = max(0.0, min(lns_seconds, time_limit - (time.time() - t0)))
-            return [pool.submit(_lns_task, secs, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns)
-                    for i in range(lns_workers)]
+            return [pool.submit(_lns_task, secs, 1000 + i + 7919 * seed, t0, 3.0, lns_big, lns_patience, lns_alns,
+                                lns_rins, lns_max_size) for i in range(lns_workers)]
         if lns_first > 0 and best_val.value < np.inf:  # E24: every worker on LNS first, then the ramp-up
             burst = [pool.submit(_lns_task, lns_first, 5000 + i + 7919 * seed, t0, 3.0, lns_big, None, lns_alns)
                      for i in range(workers)]
@@ -679,13 +723,15 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 wins += r["wins"]
             log.append(f"lns burst: {workers} workers x {lns_first:.0f}s, {wins} improvements, "
                        f"{time.time() - t0:.1f}s")
-        lns = [] if lns_after_rampup else start_lns()
+        # E39: with no incumbent yet, LNS has nothing to work on: give its workers to the tree until one exists
+        lns_pending = lns_wait_incumbent and not lns_after_rampup and best_val.value == np.inf and lns_workers > 0
+        lns = [] if (lns_after_rampup or lns_pending) else start_lns()
         if cut_rounds:
             from .cuts import cut_row, root_loop
             bounds, cuts = root_loop(model, cut_rounds)
             cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
-        free = workers if lns_after_rampup else workers - lns_workers
+        free = workers if (lns_after_rampup or lns_pending) else workers - lns_workers
         sb_pool = pool if free >= 2 else None  # never queue behind LNS tasks that run for minutes
         if sb_candidates < 0:  # E23 auto: 16 candidates when the root LP smears many projects (CFADS), else 4
             root = _lp_node(model, [])
@@ -730,6 +776,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             if cancel is not None and cancel.is_set():
                 log.append(f"cancelled at {time.time() - t0:.1f}s")
                 break
+            if lns_pending and best_val.value < np.inf:  # E39: the first schedule exists: start LNS now
+                lns = start_lns()
+                lns_pending = False
+                log.append(f"lns started on the first incumbent at {time.time() - t0:.1f}s")
             for f in [f for f in lns if f.done()]:
                 lns.remove(f)
                 trace.extend(f.result()["found"])
