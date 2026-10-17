@@ -554,3 +554,49 @@ Current defaults (the official KPI configuration plus E34/E36), warm start from 
 
 * **The family pattern holds on unseen data.** CFADS-type funding proves in about a minute. Envelope-type funding finds schedules as good as or better than the CPO's but stalls on the last plateau just above the 1e-5 target, as on s2000 (E31, E33, E35).
 * For practical use: on envelope scenarios capopt returns a schedule within about 2-3e-5 of proven optimal (better than the CPO's stored plan) well inside 15 minutes; the remaining sliver needs commercial node machinery.
+
+## Certified-gap presets (from 2026-10-17)
+
+The user's priorities changed: proofs to 1e-5 are set aside, and day-to-day work needs schedules **certified within 1% and 0.5%** as fast as possible, warm (from a previous plan) and cold. The metric for E37 onwards is wall-clock seconds until `solve` returns a schedule whose certified gap (incumbent against the proven bound over **every** last year) is at or below the target. Setup: all 10 CPO scenarios (6 COPT-timed, 4 untimed), warm from the CPO's stored plan and cold, 3 seeds, 120 s cap. Campaigns now wait for the machine to be quiet before each run and rerun contended runs (below), so every number here is load-clean.
+
+### E37: the `1pct` and `0.5pct` presets
+
+* **Hypothesis**: the proof-oriented defaults spend their first 25-80 s on a strong-branching ramp-up and only then publish a bound, and their stopping rule is 1e-5. At a 1% or 0.5% target the root LP already certifies most warm plans, so the time should be dominated by the bounding of the other last years and the process start-up. Cold, it should be the primal side.
+* **What changed** (all tested; `tests/test_presets.py`):
+  * `bounds.cash_floor_bound(inst, L)`: an O(T) lower bound on MIP(L) with no LP. Cumulative spend by year t is at most what every project would have spent by t had it started at its earliest allowed year. That gives the closing balance a floor, which is charged at the holding tiers in years 0..L-1, and every project is credited its best PV among the starts that finish by L. It is a relaxation of the LP (tested: never above it; never above any schedule's model value at any L). On the CPO scenarios it settles 50-90% of the last years at a 1% target.
+  * `solver.screen_last_years`: the floor first, then LP bounds for the rest, solved in threads. HiGHS releases the GIL, so 12 LPs take 0.5 s instead of 3.4 s.
+  * `solve(lp_screen=True)`: with a warm plan, every last year is bounded up front; if that certifies the plan, `solve` returns without spawning the pool. Last years the screen prunes, including the warm plan's own, are never solved.
+  * The ramp-up prunes at the target gap instead of at the incumbent itself.
+  * **Honest bounds at coarse gaps.** A pruned subtree used to report the incumbent as its bound. That was harmless at 1e-5 but would overstate the bound by up to 1% at the presets' gap, so pruned leaves, ramp-up nodes and queued subtrees now keep their real bound. The reported gap is the true certified gap.
+  * LNS sub-MIPs stop as soon as the master finishes (they used to run to their own limit, up to 9 s). LNS is capped at workers - 1 and at the time limit. A test found a 2-worker solve that never ended with the preset's 8 LNS workers.
+  * Plain branching (k = 1) can run batched on the pool.
+  * `PRESETS` and `solve(preset=...)`, plus `capopt solve --preset 1pct|0.5pct [--warm-start plan.json]`. Arguments left at their defaults take the preset's values; anything passed explicitly wins.
+* **Presets** (both): screen on, no quick try, 24 leaves with 4-candidate strong branching, 8 LNS workers from the first second, incumbent cutoff for leaves launched after 10 s, 10 s re-split slices; `rel_gap` 1e-2 or 5e-3, so the solve stops at the target.
+* **Screens that shaped them** (single seed, cold; exploratory):
+  * Cold, every arm was **primal-limited**. The certificate arrives seconds after the incumbent first gets within about 0.5-0.7% of the CPO plan, and that takes 10-50 s. Variants of the ramp-up (k = 1/2/4, 20-24 leaves, 4-12 LNS workers, 5-10 s slices) moved cold times only within seed noise, so the presets use the settings that are best warm, and the cold primal side is E39's subject.
+  * HiGHS's own heuristics are weak on these models. A single HiGHS run on the full fixed-L model is still 3-14% off after 60 s, whatever the encoding, and 20 seeded copies reach only 11%. HiGHS on 20 ramp-up leaves reaches 0.5% within 8 s of starting: the splits matter more than the seeds.
+  * LP-rounding constructions do not help. RENS on the root-LP support is 5-19% off; it is 1-10% off when widened by ±1-4 years. Full LP dives are 0.1-5.6% off after 8-50 s. Time-window relax-and-fix is 0.3-1% off on CFADS but 5-23% off on the flat envelope.
+  * Warm 0.5% on the envelope scenarios: HiGHS's root cut loop closes the root gap (0.58-0.61%) to 0.5% in 10-31 s. The strong-branching LP tree does it in 1 s (s2000_P50) and 8 s (s1750_P95, k = 4).
+* **Result** (median of 3 seeds, seconds to a returned schedule with certified gap ≤ target; `>` = most seeds hit the 120 s cap, `*` = at least one did; all 120 runs load-clean after 10 automatic reruns):
+
+| Scenario | warm, 1% | warm, 0.5% | cold, 1% | cold, 0.5% |
+|---|---|---|---|---|
+| s2000_P50high | 0.4 | 2.2 | 17.1 | 24.2 |
+| s2000_P50 | 0.4 | 2.0 | 15.8 | 41.4 |
+| cfadsds_P50 | 0.2 | 0.2 | 32.0 | 35.4 |
+| cfadsds_P50high | 0.3 | 0.3 | 19.3 | 30.9 |
+| cfadsds_P95 | 0.3 | 0.3 | 22.6 | 48.8 |
+| cfadsds_P95high | 0.4 | 0.4 | 19.8 | 37.2 |
+| cfads_P50 | 0.2 | 0.2 | 8.5 | 8.6 |
+| cfads_P95 | 0.3 | 0.2 | 15.4 | 15.2 |
+| s1750_P50 | 0.3 | 3.8 | 34.3 | >120.0* |
+| s1750_P95 | 0.4 | 6.4 | 70.5* | >120.0* |
+| **shifted geo. mean** | 0.3 | 1.5 | 22.7 | 38.5 |
+
+* Warm 1% is certified by the screen alone on every scenario (no MIP, no worker pool), in a third of a second. Warm 0.5% needs a few strong-branching LP nodes on the envelope scenarios (2-6 s); CFADS stays at the screen. The achieved gaps sit just under the target, as expected from a solver that stops there.
+* Cold is 9-70 s at 1% and 9-120+ s at 0.5%. Both s1750 scenarios miss 0.5% within 120 s, so the cold primal side (E39) is the main lever left.
+* **Verdict**: adopted as the named presets. The proof-oriented defaults are unchanged.
+
+### Campaign infrastructure: wait for a quiet machine, rerun contended runs
+
+The user shares this machine; a parallel build pushed the outside load to 2.5-8 cores during the first E37 screen. A campaign spec can now say `"quiet": {"max_cores": 1.0, "window_s": 30, "max_wait_s": 1800}`. Before each run the runner waits until every load-log sample of the last 30 s shows at most 1 core busy outside capopt. With `"rerun_contended": n`, a run whose load tag comes back contended is rerun up to n times (tested). In E37 this waited 37 min in total and reran 10 runs; none of the 120 kept results is contended. Runs shorter than the 10 s sampling interval carry no load samples.

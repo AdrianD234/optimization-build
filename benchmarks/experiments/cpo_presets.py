@@ -4,6 +4,7 @@
            [--scenarios s2000_P50,...] [--seeds 0,1,2] [--time-limit 120]
     python benchmarks/experiments/cpo_presets.py iterate <name> --arms '{...}' [--k 1,5] [--perturb-seeds 0] [--delay 2]
     python benchmarks/experiments/cpo_presets.py summary <name> [<name> ...]
+    python benchmarks/experiments/cpo_presets.py table <name> --arms p1,p05   (markdown medians for the docs)
 
 `spec` writes private/cpo/campaigns/<name>.spec.json for `capopt campaign launch` (reference_runner: the trace streams
 to the results folder, every run is load-tagged). Warm runs start from the CPO's stored schedule; cold runs have no
@@ -106,10 +107,44 @@ def summary(names: list[str]) -> None:
               f"{'*' if unproven else ' '} {max(gaps):8.5f} {cont}")
 
 
+
+def table(name: str, arms: list[str], scenarios: list[str] = ALL) -> str:
+    """Markdown: scenario x {warm, cold} x arm median seconds to the certified gap ('>' = some seed unproven), plus
+    the shifted geometric mean (10 s shift) per column."""
+    import math
+    cols = [(m, a) for m in ("warm", "cold") for a in arms]
+    med: dict[tuple, tuple[float, int, int]] = {}
+    for sc in scenarios:
+        for m, a in cols:
+            ts, bad = [], 0
+            for f in (CPO / "results" / name).glob(f"{sc}__{a}__{m}__seed*.json"):
+                r = json.loads(f.read_text(encoding="utf-8"))
+                ts.append(r["seconds"] if r["proven"] else r["time_limit"])
+                bad += not r["proven"]
+            if ts:
+                med[(sc, m, a)] = (statistics.median(ts), bad, len(ts))
+    head = "| Scenario | " + " | ".join(f"{m} {a}" for m, a in cols) + " |"
+    lines = [head, "|" + "---|" * (len(cols) + 1)]
+    for sc in scenarios:
+        cells = []
+        for c in cols:
+            v = med.get((sc, *c))
+            cells.append("-" if v is None else f"{'>' if v[1] * 2 >= v[2] else ''}{v[0]:.1f}{'*' if v[1] else ''}")
+        lines.append(f"| {sc} | " + " | ".join(cells) + " |")
+    sgm = []
+    for c in cols:
+        vs = [med[(sc, *c)][0] for sc in scenarios if (sc, *c) in med]
+        sgm.append(f"{math.exp(sum(math.log(v + 10) for v in vs) / len(vs)) - 10:.1f}" if vs else "-")
+    lines.append("| **shifted geo. mean** | " + " | ".join(sgm) + " |")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "spec":
         spec(sys.argv[2])
     elif sys.argv[1] == "iterate":
         iterate(sys.argv[2])
+    elif sys.argv[1] == "table":
+        print(table(sys.argv[2], _arg("--arms", "p1,p05").split(","), _arg("--scenarios", ",".join(ALL)).split(",")))
     else:
         summary(sys.argv[2:])
