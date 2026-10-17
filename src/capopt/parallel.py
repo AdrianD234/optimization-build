@@ -564,6 +564,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     idle: called with the current incumbent value whenever the master is waiting on workers (one small unit of work per
     call), e.g. LP-bounding the other last years."""
     t0 = time.time() if t0 is None else t0
+    for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        # E38: spawned workers inherit this. numpy's OpenBLAS otherwise reserves per-thread buffers for every core at
+        # import: 620 MB of commit per worker on this 20-thread machine (13 GB per pool), which crashed pools with
+        # "the paging file is too small" while other applications held most of the memory. Workers never use BLAS.
+        os.environ.setdefault(var, "1")
     workers = workers or max(1, (os.cpu_count() or 2))
     n_leaves = n_leaves or 3 * workers
     lns_workers = min(lns_workers, max(0, workers - 1))  # E37: always keep a tree worker (a preset on a small machine)
