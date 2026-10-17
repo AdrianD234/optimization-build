@@ -591,7 +591,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    max_racers: int = 4, proof_options: dict | None = None,
                    low_priority: bool = False, cancel=None, rc_fix: bool = False, lns_rins: bool = False,
                    primal_options: dict | None = None, lns_wait_incumbent: bool = False,
-                   lns_max_size: int = 45) -> ParallelResult:
+                   lns_max_size: int = 45, root_extend: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -633,6 +633,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_first (E24): with an incumbent in hand, every worker runs LNS for this many seconds before the ramp-up.
     primal_options (E39): HiGHS options for leaves launched without the incumbent cutoff (the early, schedule-finding
         ones), e.g. {"mip_heuristic_effort": 0.3}.
+    root_extend (E43): a sliced leaf that comes back still in HiGHS's root node (0 nodes) is requeued whole with a 4x
+        longer slice instead of re-split: its children would only restart the same root work.
     lns_max_size (E39): the cap on the number of projects an LNS neighbourhood frees (sizes adapt between 12 and it).
     lns_wait_incumbent (E39): without an incumbent, the LNS workers join the tree until the first schedule appears.
     lns_rins (E39): LNS also uses the LP-disagreement neighbourhood (see _lns_task).
@@ -772,6 +774,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         groups: dict[int, dict] = {}  # E28: leaf group -> copies running, best bound so far, deadline, closed
         races = racer_wins = 0
         racers: set = set()
+        root_extends = 0
         while heap or any(not groups[rv[6]]["closed"] for rv in running.values()):
             if cancel is not None and cancel.is_set():
                 log.append(f"cancelled at {time.time() - t0:.1f}s")
@@ -907,6 +910,11 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                 stolen = r["status"] == "stolen"
                 # an unexpected interrupt is reopened too: only finished, pruned or globally timed-out leaves close
                 reopen = stolen or r["status"] == "Interrupted by user"
+                if (root_extend and r["status"] == "Time limit reached" and sliced and not reopen
+                        and r.get("nodes", 1) == 0):  # E43: still in HiGHS's root: children would restart it too
+                    heapq.heappush(heap, (max(b, r["bound"]), seq, splits, sl * 4)); seq += 1
+                    root_extends += 1
+                    continue
                 if (r["status"] == "Time limit reached" and sliced) or reopen:
                     node = _lp_node(model, splits)
                     if node is None:
@@ -935,7 +943,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
             trace.append((time.time() - t0, best_val.value))
         if cap_s > 0:
             log.append(f"tree utilization: {busy_s / cap_s:.0%} of tree-worker time busy; under half busy for "
-                       f"{low_s:.0f}s; steals: {steals}; races: {races} ({racer_wins} won by a later copy)")
+                       f"{low_s:.0f}s; steals: {steals}; races: {races} ({racer_wins} won by a later copy)"
+                       + (f"; root extensions: {root_extends}" if root_extends else ""))
         if census:  # E1: which leaves held the bound (lowest final bounds first)
             worst = sorted(census)[:5]
             log.append("leaf census (worst bounds): " + "; ".join(

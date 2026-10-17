@@ -189,3 +189,12 @@ def test_results_carry_plain_python_types(tmp_path, best_known):
         assert type(r.proven) is bool and type(r.dual_bound) is float and type(r.objective) is float
         json.dumps({"proven": r.proven, "dual": r.dual_bound, "objective": r.objective})
     assert type(cash_floor_bound(I.load(name), 19)) is float
+
+
+def test_root_extend_keeps_the_result_exact(tmp_path):
+    """E43: leaves still in the root at the end of a (tiny) slice are requeued whole with longer slices."""
+    raw = S.tiny(6, 9, 100, 4, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=4, slice_seconds=0.001, root_extend=True)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
