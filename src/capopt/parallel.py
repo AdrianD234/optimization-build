@@ -194,13 +194,15 @@ def _sb_pick(node: Node, results, cutoff: float = np.inf) -> tuple[Node | None, 
 
 
 def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0,
-            pool=None, width: int = 1, pruned_bounds: list[float] | None = None) -> tuple[list[Node], int]:
+            pool=None, width: int = 1, pruned_bounds: list[float] | None = None,
+            deadline: float = np.inf) -> tuple[list[Node], int]:
     """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned).
     With strong branching on a pool, the `width` best open nodes are expanded together so the pool stays busy.
     pruned_bounds (E37): if given, the LP bounds of the pruned nodes are appended to it, so the caller can report the
-    real global bound (a node pruned at a coarse target gap can sit up to that gap below the incumbent)."""
+    real global bound (a node pruned at a coarse target gap can sit up to that gap below the incumbent).
+    deadline (E37): stop expanding at this wall-clock time; the open nodes become the leaves."""
     if pool is not None and sb_candidates >= 1 and width > 1:  # E37: k = 1 (plain branching) batches on the pool too
-        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width, pruned_bounds)
+        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width, pruned_bounds, deadline)
     pb = pruned_bounds if pruned_bounds is not None else []
     root = _lp_node(model, [])
     if root is None:
@@ -208,7 +210,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
     heap = [root]
     done: list[Node] = []
     pruned = 0
-    while heap and len(heap) + len(done) < n_leaves:
+    while heap and len(heap) + len(done) < n_leaves and time.time() < deadline:
         node = heapq.heappop(heap)
         if node.bound >= cutoff:
             pruned += 1
@@ -229,7 +231,7 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
 
 
 def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, width: int,
-                     pruned_bounds: list[float] | None = None) -> tuple[list[Node], int]:
+                     pruned_bounds: list[float] | None = None, deadline: float = np.inf) -> tuple[list[Node], int]:
     pb = pruned_bounds if pruned_bounds is not None else []
     root = _lp_node(model, [])
     if root is None:
@@ -237,7 +239,7 @@ def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, w
     heap = [root]
     done: list[Node] = []
     pruned = 0
-    while heap and len(heap) + len(done) < n_leaves:
+    while heap and len(heap) + len(done) < n_leaves and time.time() < deadline:
         batch: list[Node] = []
         while heap and len(batch) < width and len(heap) + len(done) + 2 * len(batch) < n_leaves:
             node = heapq.heappop(heap)
@@ -650,7 +652,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         width = max(1, -(-2 * free // max(1, sb_candidates)))  # E23: about 2x the free workers in tasks per round
         # E37: prune at the target gap, not at the incumbent itself (nodes within rel_gap of it are closed anyway)
         pruned_bounds: list[float] = []
-        leaves, pruned = ramp_up(model, n_leaves, tol(), sb_candidates, sb_pool, width, pruned_bounds)
+        leaves, pruned = ramp_up(model, n_leaves, tol(), sb_candidates, sb_pool, width, pruned_bounds,
+                                 deadline=t0 + time_limit)
         if pruned_bounds:
             closed.append(min(pruned_bounds))
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")

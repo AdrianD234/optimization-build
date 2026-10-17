@@ -333,6 +333,11 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         if L not in background:
             status[L] = "pruned (LP)" if L not in survivors else status.get(L, "open")
     for L in survivors:
+        if time.time() - t0 >= time_limit:  # E37: out of time: report it open (its LP bound) instead of spawning a pool
+            status[L] = "time limit"
+            proven_all = False
+            dual = min(dual, lp[L])
+            continue
         # a surviving last year is a pure proof against a good incumbent: same tree settings, cutoff from the start
         # (time_limit is relative to the shared t0; subtracting the elapsed time here used to count it twice)
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, max(time.time() - t0 + 1.0, time_limit),
