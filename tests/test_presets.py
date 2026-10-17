@@ -168,3 +168,12 @@ def test_cold_primal_options_keep_the_result_exact(tmp_path):
     r = solver.solve(str(path), workers=3, time_limit=60, n_leaves=4, lns_workers=1, lns_seconds=2, slice_seconds=0.5,
                      lns_rins=True, lns_wait_incumbent=True, primal_options={"mip_heuristic_effort": 0.3})
     assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+
+
+def test_subset_projects_scales_funding_with_spend(instances):
+    raw = instances["P100_raw_penalised"].raw
+    sub = S.subset_projects(raw, 60, 1)
+    assert len(sub["projects"]) == 60
+    share = sum(sum(p["spend_S"]) for p in sub["projects"]) / sum(sum(p["spend_S"]) for p in raw["projects"])
+    assert sum(sub["funding_S"]) == pytest.approx(share * sum(raw["funding_S"]), rel=1e-3)
+    I.from_dict(sub)
