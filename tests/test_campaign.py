@@ -73,8 +73,8 @@ def test_heartbeat_thread_keeps_the_file_fresh(tmp_path):
     import threading
     t = threading.Thread(target=C.run, args=(spec, tmp_path / "hb"), kwargs={"heartbeat_s": 0.1})
     t.start()
-    for _ in range(5):
-        time.sleep(0.1)
+    while t.is_alive():  # sample for the whole run (a fixed 5 samples flaked on a slow CI runner)
+        time.sleep(0.05)
         p = C.read_json(tmp_path / "hb" / C.PROGRESS)
         if p:
             seen.append(p["last_heartbeat"])
