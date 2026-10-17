@@ -636,18 +636,18 @@ The user shares this machine; a parallel build pushed the outside load to 2.5-8 
 
 `1pct`:
 
-| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 7.2 | 16.5 | 5.4s | 5.4s | 4.1s | 3.0s | 1.4s | 3.0s | 20.6 | 54.8 |
-| 3 | 4.6s | 1.1s | 1.6s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 1.4s | 47.2 |
+| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 7.2 | 16.5 | 5.4s | 5.4s | 4.1s | 3.0s | 1.4s | 3.0s | 20.6 | 54.8 |
+| 3 | 4.6s | 1.1s | 1.6s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 1.4s | 47.2 |
 | 5 | 1.0s | 1.3s | 1.3s | 1.1s | 1.6s | 1.2s | 1.0s | 0.9s | 1.7s | 29.4 |
 
 `0.5pct`:
 
-| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 16.9 | >120 | 5.4s | 17.5 | 4.1s | 3.0s | 1.4s | 3.0s | 26.9 | 54.4 |
-| 3 | 6.2 | 2.8 | 1.5s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 4.7 | 120.6 |
+| Projects edited | s2000_P50high | s2000_P50 | cfadsds_P50 | cfadsds_P50high | cfadsds_P95 | cfadsds_P95high | cfads_P50 | cfads_P95 | s1750_P50 | s1750_P95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 16.9 | >120 | 5.4s | 17.5 | 4.1s | 3.0s | 1.4s | 3.0s | 26.9 | 54.4 |
+| 3 | 6.2 | 2.8 | 1.5s | 5.4s | 1.4s | 1.0s | 0.2s | 0.9s | 4.7 | 120.6 |
 | 5 | 2.6 | 3.0 | 1.3s | 1.1s | 1.5s | 1.1s | 1.0s | 0.9s | 5.3 | 110.1 |
 
 * Median over the 30 edits: **1.6 s to 1%** (24 of 30 certified by the screen after the repair) and **3.0 s to 0.5%**. The slow cells are edits the local repair cannot absorb, such as s2000_P50 with one project whose spend increase pushes the earliest feasible last year from 30 to 31. There the repaired plan starts 1-5% off and LNS has to close the rest, like a cold start (E39).
