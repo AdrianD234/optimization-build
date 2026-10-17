@@ -652,3 +652,19 @@ The user shares this machine; a parallel build pushed the outside load to 2.5-8 
 
 * Median over the 30 edits: **1.6 s to 1%** (24 of 30 certified by the screen after the repair) and **3.0 s to 0.5%**. The slow cells are edits the local repair cannot absorb, such as s2000_P50 with one project whose spend increase pushes the earliest feasible last year from 30 to 31. There the repaired plan starts 1-5% off and LNS has to close the rest, like a cold start (E39).
 * **Verdict**: plan repair adopted (default on). A model iteration typically re-solves to 1% in about 1-5 s.
+
+### E40: start-window tightening by reduced-cost fixing at the target gap (MASTER_PLAN Phase 4)
+
+* **Hypothesis**: at 1e-5, reduced-cost fixing removes about 1.5% of columns at the root (HYBRID_AND_CROSSFIELD). At a 0.5% target the cutoff is the incumbent minus 0.5%, so the threshold is far looser. Dropping provably useless start years before the tree should shrink every LP of the strong-branching ramp-up and speed the warm 0.5% runs on the envelope scenarios.
+* **What changed** (opt-in `rc_fix`, tested): `parallel.rc_fixings(model, cutoff)` solves the root LP and uses its reduced costs. A step column at 0 whose reduced cost lifts the LP value above the cutoff is fixed to 0 (the project starts later than that option); one at 1 is fixed to 1. By the Lagrangian bound, every schedule excluded has value at least the cutoff, so the fixings become the root splits of the tree, and the cutoff enters the reported bound. Test: on tiny instances, at five cutoffs, every schedule whose model value is below the cutoff satisfies every fixing; presets with `rc_fix` still match brute force.
+* **Result** (warm from the CPO plan, `0.5pct`, 3 seeds, load-clean): the fixing is real (64-118 start-window bounds per scenario, in 0.7-1.5 s) but changes nothing measurable:
+
+| Scenario | base | `rc_fix` |
+|---|---|---|
+| s2000_P50high | 2.0 | 2.2 |
+| s2000_P50 | 2.1 | 2.1 |
+| s1750_P50 | 3.7 | 3.7 |
+| s1750_P95 | 6.5 | 6.6 |
+
+* **Why**: the warm 0.5% time is the strong-branching ramp-up itself (1 expansion on s2000, 9 pruned nodes on s1750_P95). Fixing columns at their LP values leaves those LPs' cost and the child bounds almost unchanged; the fixed columns were not the ones branching moved. Cold runs gain nothing either: the fixing needs an incumbent at ramp-up time, which a cold start does not have.
+* **Verdict**: no gain; `rc_fix` stays opt-in and off. The warm 0.5% lever is the ramp-up's worker count (E42).
