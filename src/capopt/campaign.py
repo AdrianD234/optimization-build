@@ -23,6 +23,9 @@ Spec file (JSON):
     {"name": "holdout", "time_limit": 900,
      "runs": [{"config": "capopt_quick_nocut", "instance": "P100_raw_penalised", "seed": 0}, ...]}
 or a cross product: {"name": ..., "configs": [...], "instances": [...], "seeds": [0]}.
+"quiet" (optional, e.g. {"max_cores": 1.0, "window_s": 30, "max_wait_s": 1800}) makes the runner wait before each
+run until the load log shows the machine quiet (wait_quiet); "rerun_contended": n reruns a run whose result comes back
+load-contended, up to n times.
 "runner" (optional) names the function that executes one run, "module:function". The default,
 capopt.campaign:bench_runner, uses bench.run_isolated (benchmark configs, watchdog, stored traces).
 capopt.campaign:solve_runner solves any instance file with the default pipeline. capopt.campaign:sleep_runner exists
@@ -90,6 +93,36 @@ def load_tag(t_start: float, t_end: float, path: Path | str | None = None,
     return {"samples": len(rows), "other_cores_mean": round(mean, 2), "other_cores_peak": round(peak, 2),
             "free_gb_min": round(min(r[1] for r in rows), 1), "contended": mean > mean_limit or peak > peak_limit,
             "dropped": dropped}
+def wait_quiet(max_cores: float = 1.0, window_s: float = 30.0, max_wait_s: float = 1800.0,
+               path: Path | str | None = None, poll_s: float = 10.0, sleep: Callable[[float], None] = time.sleep,
+               clock: Callable[[], float] = time.time) -> float:
+    """Block until every load-log sample of the last `window_s` seconds shows at most `max_cores` busy outside capopt
+    (the user shares this machine), or `max_wait_s` has passed. Returns the seconds waited. Returns at once when there
+    is no load log or its last sample is over a minute old (no way to tell; the run's load tag will say so)."""
+    path = Path(os.environ.get("CAPOPT_LOAD_LOG", LOAD_LOG) if path is None else path)
+    cores = os.cpu_count() or 1
+    t0 = clock()
+    while True:
+        if not path.exists():
+            return clock() - t0
+        rows = []
+        for line in path.read_text(encoding="utf-8-sig").splitlines()[-200:]:
+            f = line.split(",")
+            try:
+                rows.append((float(f[0]), float(f[1])))
+            except (ValueError, IndexError):
+                continue
+        now = clock()
+        if not rows or now - rows[-1][0] > 60:
+            return now - t0
+        recent = [c for t, c in rows if t >= now - window_s and c <= cores]  # drop counter artefacts (load_tag)
+        if recent and max(recent) <= max_cores:
+            return now - t0
+        if now - t0 >= max_wait_s:
+            return now - t0
+        sleep(poll_s)
+
+
 HEARTBEAT_S = 30.0
 STALE_S = 300.0          # no heartbeat for this long => STALLED
 NOT_STARTED_S = 60.0     # launch marker this old with no progress file => NOT_STARTED
@@ -237,10 +270,16 @@ def mindopt_reference_runner(run: dict, time_limit: float, out_dir: Path) -> dic
 
 
 def sleep_runner(run: dict, time_limit: float, out_dir: Path) -> dict[str, Any]:
-    """Machinery test: sleeps run['seconds']; raises if run['fail']."""
+    """Machinery test: sleeps run['seconds']; raises if run['fail']; reports contended while a counter file
+    run['contended_file'] holds a positive number (decremented on each call)."""
     time.sleep(float(run.get("seconds", 0.1)))
     if run.get("fail"):
         raise RuntimeError("requested failure")
+    f = run.get("contended_file")
+    if f:
+        n = int(Path(f).read_text(encoding="utf-8"))
+        Path(f).write_text(str(n - 1), encoding="utf-8")
+        return {"status": "done", "contended": n > 0}
     return {"status": "done"}
 
 
@@ -364,12 +403,23 @@ def run(spec: dict, cdir: Path, heartbeat_s: float = HEARTBEAT_S, out_dir: Path 
     try:
         runner = _resolve(spec["runner"])
         out = Path(out_dir or spec.get("out_dir") or RESULTS)
+        quiet = spec.get("quiet")  # e.g. {"max_cores": 1.0, "window_s": 30, "max_wait_s": 1800}
+        reruns = int(spec.get("rerun_contended", 0))
         for k, item in enumerate(spec["runs"]):
-            prog.start_run(k)
-            try:
-                outcome = runner(item, float(item.get("time_limit", spec["time_limit"])), out)  # per-run override
-            except Exception as exc:  # noqa: BLE001 - record and continue with the next run
-                outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            waited, attempts = 0.0, 0
+            while True:  # a run that comes back contended is rerun (up to `rerun_contended` times), after a quiet wait
+                if quiet:
+                    waited += wait_quiet(**quiet)
+                prog.start_run(k)
+                attempts += 1
+                try:
+                    outcome = runner(item, float(item.get("time_limit", spec["time_limit"])), out)  # per-run override
+                except Exception as exc:  # noqa: BLE001 - record and continue with the next run
+                    outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                if not (outcome.get("contended") and attempts <= reruns):
+                    break
+            if quiet or reruns:
+                outcome = dict(outcome, attempts=attempts, waited_for_quiet=round(waited, 1))
             prog.end_run(k, outcome)
             print(f"[{prog.data['done']}/{prog.data['total']}] {item} -> {outcome}", flush=True)
         prog.finish("complete")

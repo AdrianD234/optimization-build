@@ -56,6 +56,29 @@ def perturb(name: str, seed: int, spend_noise: float = 0.1, pv_noise: float = 0.
     return raw
 
 
+def perturb_projects(raw: dict[str, Any], seed: int, k: int, spend: float = 0.2, pv: float = 0.2,
+                     delay: int = 0) -> tuple[dict[str, Any], list[str]]:
+    """E38: a model iteration. k random projects of an instance (raw JSON) get their spend and PV scaled by independent
+    factors in [1 - spend, 1 + spend] and [1 - pv, 1 + pv], and with `delay` > 0 their earliest allowed start moves
+    later by 1..delay years (a slipped approval). Returns the new raw instance and the ids of the changed projects."""
+    rng = np.random.default_rng(seed)
+    raw = copy.deepcopy(raw)
+    raw["name"] = f"{raw.get('name', 'instance')}_iter_k{k}_s{seed}"
+    picks = rng.choice(len(raw["projects"]), size=k, replace=False)
+    for i in picks:
+        p = raw["projects"][int(i)]
+        f = float(rng.uniform(1 - spend, 1 + spend))
+        p["spend_S"] = [int(round(a * f)) for a in p["spend_S"]]
+        g = float(rng.uniform(1 - pv, 1 + pv))
+        p["pv_int"] = [int(round(v * g)) for v in p["pv_int"]]
+        if delay > 0 and len(p["allowed_starts"]) > 1:
+            d = int(rng.integers(1, delay + 1))
+            d = min(d, len(p["allowed_starts"]) - 1)
+            p["allowed_starts"] = p["allowed_starts"][d:]
+            p["pv_int"] = p["pv_int"][d:]
+    return raw, [raw["projects"][int(i)]["id"] for i in picks]
+
+
 def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     """Exact optimum by enumeration (tiny instances only)."""
     from .evaluate import objective

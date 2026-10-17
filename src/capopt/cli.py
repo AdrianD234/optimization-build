@@ -19,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--workers", type=int, default=None)
     s.add_argument("--time-limit", type=float, default=900.0)
     s.add_argument("--leaves", type=int, default=60)
+    s.add_argument("--preset", default=None, choices=sorted(solver.PRESETS),
+                   help="stop at a certified gap: 1pct or 0.5pct (incumbent vs proven bound over every last year)")
+    s.add_argument("--warm-start", default=None, help="schedule JSON ({'starts': {...}}) to start from, e.g. the last plan")
     b = sub.add_parser("bench", help="run benchmark configurations and store traces")
     b.add_argument("--configs", default=None, help="comma-separated (default: all; with --holdout: the I3/I7-I9 ladder)")
     b.add_argument("--instances", default=None,
@@ -77,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if st["state"] in campaign.OK_STATES else (2 if st["state"] == "NOT_LAUNCHED" else 1)
         return campaign.watch(cdir, a.interval, emit=lambda line: print(line, flush=True), stale_s=a.stale)
     if a.cmd == "solve":
-        r = solver.solve(a.instance, a.workers, a.time_limit, a.leaves)
+        r = solver.solve(a.instance, a.workers, a.time_limit, a.leaves, warm_start=a.warm_start, preset=a.preset)
         print(json.dumps({"instance": r.instance, "objective": r.objective, "proven": r.proven,
                           "dual_bound": r.dual_bound, "seconds": round(r.seconds, 2), "log": r.log}, indent=1))
         if a.out and r.starts:

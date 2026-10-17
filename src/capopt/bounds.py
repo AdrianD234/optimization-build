@@ -93,3 +93,41 @@ def block_bound(model: Model, keep_years: set[int] | None, time_limit: float = 3
         bound = h.getInfo().mip_dual_bound  # valid whether or not the block MIP finished
     return {"bound": bound / s, "lp_bound": lp_obj / s, "status": status, "seconds": round(time.time() - t0, 2),
             "kept_year_rows": len(row_year) - len(relaxed), "dropped_multipliers": dropped}
+
+
+def cash_floor_bound(inst, L: int) -> float:
+    """E37: an O(T) lower bound on MIP(L) that needs no LP. Cumulative spend by year t is at most what every project
+    would have spent by t had it started at its earliest allowed year (spend is non-negative), so the closing balance
+    is at least max(0, cumF_t - maxcumspend_t). Holding cost is non-decreasing in the balance (non-negative weights),
+    so charging that floor in years 0..L-1 and crediting every project its best PV among the starts that finish by L
+    bounds every schedule in MIP(L) from below. +inf when some project cannot finish by L; -inf when a sign assumption
+    fails (negative spend or weights), so callers fall back to the LP. On the CPO scenarios it prunes half to nine
+    tenths of the later last years at a 1% target without building their models."""
+    if (inst.backlog_weight < 0 or inst.pv_weight < 0 or any(w < 0 for _, _, w in inst.bands)
+            or any(int(sp.min(initial=0)) < 0 for sp in inst.spend)):
+        return -np.inf
+    pv = 0
+    for p in range(inst.n):
+        ok = inst.allowed[p] + inst.last_nz[p] <= L
+        if not ok.any():
+            return np.inf
+        pv += int(inst.pv[p][ok].max())
+    maxspend = np.zeros(inst.T)
+    for p in range(inst.n):
+        a = int(inst.allowed[p][0])
+        sp = inst.spend[p][:max(0, inst.T - a)].astype(float)
+        maxspend[a:a + len(sp)] += sp
+    floor = np.maximum(0.0, np.cumsum(inst.F.astype(float)) - np.cumsum(maxspend))
+    hold = 0.0
+    if inst.penalised:
+        for t in range(min(L, inst.T)):
+            env = max(0.0, float(inst.F[t]))
+            hold += inst.backlog_weight * floor[t]
+            excess = max(0.0, floor[t] - env * inst.base_frac)
+            for lo, hi, w in inst.bands:
+                if excess <= 0:
+                    break
+                take = excess if hi is None else min(excess, env * (hi - lo))
+                hold += take * w
+                excess -= take
+    return hold - inst.pv_weight * pv

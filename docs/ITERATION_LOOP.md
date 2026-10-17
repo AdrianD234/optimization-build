@@ -151,3 +151,15 @@ Queue (cheap and high value first):
 4. CFADS #4 final-years block bound.
 5. GAP #2 persistent outer LP tree.
 6. The HiGHS dynamic-cutoff fork.
+
+## Certified-gap track (from 2026-10-17)
+
+The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing now; data quality matters more, and day-to-day iteration needs schedules **certified within 1% and 0.5%** quickly. Metric: seconds until `solve(preset=...)` returns a schedule whose certified gap (incumbent against the proven bound over every last year) is within the target. Scoreboard: all 10 CPO scenarios × {warm from the stored plan, cold} × 3 seeds, load-clean (campaigns wait for a quiet machine and rerun contended runs). The 1e-5 endgame items above stay parked.
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| E37 | `1pct` / `0.5pct` presets: cash-floor bound, threaded last-year screen with early exit, gap-aware ramp-up pruning, honest coarse-gap bounds | ✅ adopted | warm 1% 0.2-0.4 s, warm 0.5% 0.2-6.4 s; cold 9-70 s / 9-120+ s |
+| E38 | Incremental re-solve (Q8): perturb 1-5 projects, warm from the previous plan, with plan repair | queued | `synthetic.perturb_projects`, `solver.repair_schedule` ready |
+| E39 | Cold-start primal: LP-disagreement LNS (RINS), primal-leaf HiGHS options, LNS-first bursts | queued | the cold rows of E37 are primal-limited |
+| E40 | Start-window tightening (MASTER_PLAN Phase 4) | queued | |
+| E41 | Scaling (Q7, 150/200/233 projects) and every extracted scenario (Q1) | queued | |
