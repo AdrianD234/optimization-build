@@ -770,3 +770,17 @@ The `1pct` and `0.5pct` presets as merged after E37-E42: lp screen; 24 leaves wi
   Shifted geometric means, presets against these defaults (120 s cap): warm 1% **0.3 vs 2.2 s**, warm 0.5% **1.3 vs 3.5 s**, cold 1% **20.0 vs 39.5 s**, cold 0.5% **31.0 vs 44.0 s**. The defaults spend 1-3 s warm on process start-up and serial LP bounds that the presets' screen avoids. Cold, their 16-candidate strong-branching ramp-up on CFADS costs 40-80 s before any leaf runs.
 * **Bug found on the way**: a bound from the cash floor could be a numpy float, which made `Result.proven` a numpy bool; the campaign's JSON writer then failed (7 baseline runs). Results now carry plain Python types (tested).
 * **Stopping point**: E39-E42 tried every remaining lever on the list. The only changes beyond seed noise were 12 LNS workers (cold) and LNS after the ramp-up (warm), both adopted. Window tightening (E40), the LP-disagreement neighbourhood, primal-leaf settings, bigger neighbourhoods and deferring LNS all stayed within noise. Further cold gains need a new primal method (cash-balanced compound moves, H10; a donor plan from a sibling scenario, H14); that is research, not tuning.
+
+### E43: don't re-split a leaf that is still in HiGHS's root (cold s1750 outlier)
+
+* **Hypothesis**: on s1750_P95 every 10 s leaf slice ends inside HiGHS's root node (0 nodes), and the re-split children start the same root work again. That wastes the tree workers, which on other scenarios supply schedules. Option `root_extend`: such a leaf goes back to the queue whole, with a 4x slice.
+* **Result** (cold, `0.5pct`, 2 seeds, 300 s cap, load-clean; the option fired 6-15 times per run):
+
+| Scenario | base | `root_extend` |
+|---|---|---|
+| s2000_P50 | 39.2 | 35.0 |
+| cfadsds_P95 | 44.9 | 48.2 |
+| s1750_P50 | 54.6 | 41.6 |
+| s1750_P95 | 164 / >300 | 154 / >300 |
+
+* **Verdict**: within seed noise; it does not fix the s1750_P95 outlier. Leaves that do get past the root still find nothing on that scenario (E39), so the outlier is down to LNS luck. The option stays opt-in and off.
