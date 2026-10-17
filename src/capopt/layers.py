@@ -256,7 +256,8 @@ def funding_base(raw: dict, spans: list[tuple[int, int]]) -> list[float]:
 
 def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, float],
                     spans: list[tuple[int, int]], weights: list[float], price_pct: float, pv_star_obj: float,
-                    tol: float = 0.10, lumpiness: str | None = "year", lump_cap: float = 0.5, slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
+                    tol: float = 0.10, lumpiness: str | None = "year", lump_cap: float = 0.5,
+                    slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
                     breaks: tuple[float, ...] = (0.10, 0.20), norm_floor: float = 2_500.0, min_share: float = 0.0,
                     prefix: str = "", cap_attainable: bool = True) -> list[dict]:
     """Shortfall rows of the generic allocation layer for subsets `groups` with target `shares` over `spans` (build
@@ -265,9 +266,10 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
     Target = share x fixed base (`funding_base`). Free within max(tol x target, lump), lump = the lumpiness floor:
     "year" = the largest single-year spend of a member (a one-year shift of a start moves the span's spend by at most
     that), "window" = the most one member can put in the span; capped at lump_cap x target (single members can
-    out-spend a small subset's whole target, which would switch its row off); None = no floor. Beyond that the deficit is charged at `slopes` (relative), with
-    breakpoints at `breaks` x the normaliser N = max(target, norm_floor). Pricing in PV-equivalent units: a deficit of 1%
-    of N in a span of weight weights[0] (on the first slope) costs `price_pct` % of `pv_star_obj` (the objective units
+    out-spend a small subset's whole target, which would switch its row off); None = no floor. Beyond that the deficit is
+    charged at `slopes` (relative), with breakpoints at `breaks` x the normaliser N = max(target, norm_floor). Pricing
+    in PV-equivalent units: a deficit of 1% of N in a span of weight weights[0] (on the first slope) costs `price_pct` %
+    of `pv_star_obj` (the objective units
     of total PV, pv_weight x PV*). Spans after the first scale by weights[w] / weights[0].
     cap_attainable: the target never exceeds what the subset's own pipeline can spend in the span (the sum over members
     of the most each can put there): a population-based target can exceed a region's whole pipeline, and a penalty no
