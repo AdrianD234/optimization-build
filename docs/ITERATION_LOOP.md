@@ -162,5 +162,8 @@ The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing no
 | E38 | Incremental re-solve (Q8): perturb 1-5 projects, warm from the previous plan, with plan repair | ✅ repair adopted | median 1.6 s to 1%, 3.0 s to 0.5% over 30 edits; concurrent-proof cancellation; worker memory 620 MB to 29 MB |
 | E39 | Cold-start primal: LP-disagreement LNS, primal-leaf HiGHS options, LNS waiting for the first schedule, neighbourhood cap 90, 12/16 LNS workers; offline: soft-tier seeds, leaf settings | ◐ 12 LNS adopted (-11% pooled) | the rest is within seed noise; s1750_P95 cold 0.5% still > 120 s |
 | E42 | Start LNS after the ramp-up (warm strong branching gets all workers) | ✅ adopted | warm 0.5% about -10% on the envelope scenarios |
+| E43 | Requeue leaves still in HiGHS's root with a longer slice instead of re-splitting (`root_extend`) | ✖ no gain | within noise; s1750_P95 cold stays 150 s to more than 300 s |
 | E40 | Start-window tightening (MASTER_PLAN Phase 4): reduced-cost fixing at the target cutoff | ✖ no gain | 64-118 window bounds fixed, warm 0.5% times unchanged; `rc_fix` opt-in |
 | E41 | Scaling (Q7, 100/150/200/233 projects) and every extracted scenario (Q1) | ✅ answered | time does not grow with size; smaller programmes at equal tightness are harder (lumpier packing) |
+
+**Status of the certified-gap track (2026-10-17): converged.** Both presets are merged and measured (EXPERIMENTS.md "Final table"). E39-E43 found no further lever beyond seed noise. Open direction for cold starts: a new primal method, such as cash-balanced compound moves (H10, reopened only in that form) or a donor plan from a sibling scenario (H14), rather than more tuning.
