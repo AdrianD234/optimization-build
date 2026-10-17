@@ -256,17 +256,22 @@ def funding_base(raw: dict, spans: list[tuple[int, int]]) -> list[float]:
 
 def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, float],
                     spans: list[tuple[int, int]], weights: list[float], price_pct: float, pv_star_obj: float,
-                    tol: float = 0.10, lumpiness: bool = True, slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
+                    tol: float = 0.10, lumpiness: str | None = "year", lump_cap: float = 0.5, slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
                     breaks: tuple[float, ...] = (0.10, 0.20), norm_floor: float = 2_500.0, min_share: float = 0.0,
-                    prefix: str = "") -> list[dict]:
+                    prefix: str = "", cap_attainable: bool = True) -> list[dict]:
     """Shortfall rows of the generic allocation layer for subsets `groups` with target `shares` over `spans` (build
     year ranges: windows, or cumulative checkpoints (0, c - 1)).
 
-    Target = share x fixed base (`funding_base`). Free within max(tol x target, the largest spend one member can put in
-    the span) when `lumpiness`, else tol x target. Beyond that the deficit is charged at `slopes` (relative), with
+    Target = share x fixed base (`funding_base`). Free within max(tol x target, lump), lump = the lumpiness floor:
+    "year" = the largest single-year spend of a member (a one-year shift of a start moves the span's spend by at most
+    that), "window" = the most one member can put in the span; capped at lump_cap x target (single members can
+    out-spend a small subset's whole target, which would switch its row off); None = no floor. Beyond that the deficit is charged at `slopes` (relative), with
     breakpoints at `breaks` x the normaliser N = max(target, norm_floor). Pricing in PV-equivalent units: a deficit of 1%
     of N in a span of weight weights[0] (on the first slope) costs `price_pct` % of `pv_star_obj` (the objective units
-    of total PV, pv_weight x PV*). Spans after the first scale by weights[w] / weights[0]."""
+    of total PV, pv_weight x PV*). Spans after the first scale by weights[w] / weights[0].
+    cap_attainable: the target never exceeds what the subset's own pipeline can spend in the span (the sum over members
+    of the most each can put there): a population-based target can exceed a region's whole pipeline, and a penalty no
+    schedule can avoid only shifts the objective and blurs its relative gap. Rows carry "norm" (N) for reporting."""
     base = funding_base(raw, spans)
     rows = []
     for name, mem in groups.items():
@@ -275,17 +280,21 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
             continue
         for w, ((a, b), B) in enumerate(zip(spans, base)):
             target = s * B
+            if cap_attainable:
+                target = min(target, sum(max_window_spend(raw, [p], a, b) for p in mem))
             if target <= 0:
                 continue
             free = tol * target
-            if lumpiness:
-                free = max(free, max_window_spend(raw, mem, a, b))
+            if lumpiness == "window":
+                free = max(free, min(lump_cap * target, max_window_spend(raw, mem, a, b)))
+            elif lumpiness == "year":
+                free = max(free, min(lump_cap * target, max(max(raw["projects"][p]["spend_S"]) for p in mem)))
             N = max(target, norm_floor)
             unit = (weights[w] / weights[0]) * (price_pct / 100.0) * pv_star_obj / (0.01 * N)
             widths = [bk * N for bk in breaks]
             widths = [widths[0]] + [hi - lo for lo, hi in zip(widths, widths[1:])] + [None]
             rows.append({"label": f"{prefix}{name}|w{w}", "members": list(mem), "years": [a, b],
-                         "target": target, "free": free,
+                         "target": target, "free": free, "norm": N,
                          "segments": [[wd, unit * sl] for wd, sl in zip(widths, slopes)]})
     return rows
 

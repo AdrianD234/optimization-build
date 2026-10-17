@@ -11,7 +11,8 @@
 Variants ("+" joins layers; "base" = no layer):
     dim-<D>-f<NN>      dimension scoring: objective PV = w_p x PV_D (CPO notebook weights), Total PV >= NN% of PV*
     cls-x<P>           activity class, soft: first four 3-year windows, weights 8:4:2:1, free 10% or the lumpiness
-                       floor, slopes 1:4:12; a 1% shortfall in window 1 costs P% of PV*
+                       floor (largest single-year spend of a member, capped at half the target), slopes 1:4:12; a 1%
+                       shortfall in window 1 costs P% of PV*
     clshard            the CPO baseline: hard +-10% of realised window spend + $25M, first four windows, min share 2%
     reg-<cost|blend>-x<P>  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
                        floor; target share = cost share, or 50/50 population and cost share (National excluded)
@@ -217,22 +218,20 @@ def metrics(sc: str, starts: dict) -> dict:
     for p, s in enumerate(st):
         spend[p, s:s + len(inst.spend[p])] = inst.spend[p]
 
-    def short(groups, shares, spans, tol):
-        base = LY.funding_base(raw, spans)
-        res = []
-        for (a, b), B in zip(spans, base):
-            worst = tot = 0.0
-            for k, mem in groups.items():
-                tgt = shares[k] * B
-                free = max(tol * tgt, LY.max_window_spend(raw, mem, a, b))
-                d = max(0.0, tgt - free - spend[mem, a:b + 1].sum())
-                worst = max(worst, d / max(tgt, NORM_FLOOR))
-                tot += d
-            res.append({"worst_pct": 100 * worst, "total_M": tot / 100})
+    def short(groups, shares, spans, weights, tol):
+        """Deficits beyond the free zone, from the same rows the layer builds (price irrelevant here)."""
+        rows = LY.allocation_rows(raw, groups, shares, spans, weights, 1.0, 1.0, tol=tol, norm_floor=NORM_FLOOR)
+        res = [{"worst_pct": 0.0, "total_M": 0.0} for _ in spans]
+        for r in rows:
+            w = int(r["label"].rsplit("|w", 1)[1])
+            a, b = r["years"]
+            d = max(0.0, r["target"] - r["free"] - spend[r["members"], a:b + 1].sum())
+            res[w]["worst_pct"] = max(res[w]["worst_pct"], 100 * d / r["norm"])
+            res[w]["total_M"] += d / 100
         return res
     cg = groups_of(raw, A, "activity_class")
     csh = LY.cost_shares(raw, cg)
-    out["class"] = short(cg, csh, CLASS_SPANS, 0.10)
+    out["class"] = short(cg, csh, CLASS_SPANS, CLASS_WEIGHTS, 0.10)
     viol = 0
     for k, mem in cg.items():
         if csh[k] < 0.02:
@@ -243,7 +242,7 @@ def metrics(sc: str, starts: dict) -> dict:
     out["class_band_violations"] = int(viol)
     for basis in ("cost", "blend"):
         g, sh = region_shares(raw, A, basis)
-        out[f"region_{basis}"] = short(g, sh, REG_SPANS, 0.20)
+        out[f"region_{basis}"] = short(g, sh, REG_SPANS, REG_WEIGHTS, 0.20)
     return out
 
 
@@ -276,6 +275,8 @@ def spec(name: str) -> Path:
                                      "label": label})
     (CPO / "campaigns").mkdir(exist_ok=True)
     out = CPO / "campaigns" / f"{name}.spec.json"
+    if "--append" in sys.argv and out.exists():  # several variant x arm blocks in one campaign
+        runs = json.loads(out.read_text(encoding="utf-8"))["runs"] + runs
     out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
                                "out_dir": str(CPO / "results" / name), "runs": runs, **QUIET}, indent=1),
                    encoding="utf-8")

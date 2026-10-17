@@ -22,9 +22,9 @@ def layered(seed: int, kinds=("short", "bands", "floor"), n: int = 6, T: int = 9
     lay: dict = {}
     if "short" in kinds:
         lay["shortfall"] = (LY.allocation_rows(raw, groups, shares, [(0, 1), (2, 3)], [2.0, 1.0], 0.5, 1e4 * 50,
-                                               tol=0.05, lumpiness=False, norm_floor=10.0, prefix="win:")
+                                               tol=0.05, lumpiness=None, norm_floor=10.0, prefix="win:")
                             + LY.allocation_rows(raw, groups, shares, [(0, 2), (0, 4)], [2.0, 1.0], 0.2, 1e4 * 50,
-                                                 tol=0.0, lumpiness=False, norm_floor=10.0, prefix="cum:"))
+                                                 tol=0.0, lumpiness=None, norm_floor=10.0, prefix="cum:"))
     pv_obj = None
     if "floor" in kinds:
         tot = [p["pv_int"] for p in raw["projects"]]
@@ -106,7 +106,7 @@ def test_allocation_pricing_is_pv_equivalent():
     """A deficit of 1% of the normaliser, beyond the free zone, in the first span costs price_pct % of PV*."""
     raw = S.tiny(4, 8, 100, 0)
     rows = LY.allocation_rows(raw, {"A": [0, 1]}, {"A": 0.5}, [(0, 1), (0, 3)], [4.0, 2.0], 0.1, 1e9, tol=0.1,
-                              lumpiness=False, norm_floor=0.0)
+                              lumpiness=None, norm_floor=0.0)
     r0, r1 = rows
     N = r0["target"]
     w, c = r0["segments"][0]
@@ -152,3 +152,11 @@ def test_best_first_with_a_poor_warm_plan_stays_exact(tmp_path):
                      warm_triage=True)
     assert r.proven and r.objective - bf <= 1e-2 * abs(r.objective) + 1e-6 and r.dual_bound <= bf + 1e-9 * abs(bf)
     assert any("warm triage" in line for line in r.log)
+
+
+def test_lumpiness_floor_is_capped():
+    raw = S.tiny(4, 8, 100, 0)
+    mem = [0, 1]
+    big = max(max(raw["projects"][p]["spend_S"]) for p in mem)
+    r = LY.allocation_rows(raw, {"A": mem}, {"A": 0.5}, [(0, 1)], [1.0], 0.1, 1e9, tol=0.0, lump_cap=0.5)[0]
+    assert r["free"] == pytest.approx(min(0.5 * r["target"], big))
