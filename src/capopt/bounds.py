@@ -130,4 +130,4 @@ def cash_floor_bound(inst, L: int) -> float:
                 take = excess if hi is None else min(excess, env * (hi - lo))
                 hold += take * w
                 excess -= take
-    return hold - inst.pv_weight * pv
+    return float(hold - inst.pv_weight * pv)
