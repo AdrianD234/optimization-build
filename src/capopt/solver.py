@@ -169,7 +169,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           lns_first: float = 0.0, steal_after: float | None = None, race_after: float | None = None,
           proof_options: dict | None = None, concurrent_proofs: bool = True,
           low_priority_proofs: bool = True, lp_screen: bool = False, preset: str | None = None,
-          repair_warm: bool = True) -> Result:
+          repair_warm: bool = True, rc_fix: bool = False) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -185,6 +185,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     at once when that already certifies the incumbent within rel_gap; last years the screen prunes are never solved.
     repair_warm (E38): a warm schedule that is infeasible for this instance (an edited model) is repaired with
     repair_schedule instead of being dropped; projects missing from it start at their earliest allowed year.
+    rc_fix (E40): tighten start windows by reduced-cost fixing at the target cutoff before each tree (rc_fixings).
     preset (E37): a named option set from PRESETS ("1pct", "0.5pct") that stops at a certified gap. Arguments left at
     this function's defaults take the preset's values; any other value passed explicitly wins over the preset."""
     if preset is not None:
@@ -298,7 +299,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                     incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                     rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
                     steal_after=steal_after, race_after=race_after, proof_options=proof_options,
-                    low_priority=low_priority_proofs, cancel=cancels[L])
+                    low_priority=low_priority_proofs, cancel=cancels[L], rc_fix=rc_fix)
             tpe.shutdown(wait=False)
             log.append(f"concurrent proofs started for L={early} at {time.time() - t0:.1f}s")
             others_idle = [L for L in others if L not in background]  # idle LP trees skip the ones being proven
@@ -313,7 +314,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                            cutoff_after=cutoff_after, sb_candidates=sb_candidates, lns_big=lns_big,
                            lns_after_rampup=lns_after_rampup, lns_patience=lns_patience, lns_alns=lns_alns,
                            lns_first=lns_first, steal_after=steal_after, race_after=race_after,
-                           proof_options=proof_options)
+                           proof_options=proof_options, rc_fix=rc_fix)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven
@@ -364,7 +365,8 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
         r = solve_parallel(name, L, workers, n_leaves, encoding, balance, max(time.time() - t0 + 1.0, time_limit),
                            incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                            rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
-                           steal_after=steal_after, race_after=race_after, proof_options=proof_options)
+                           steal_after=steal_after, race_after=race_after, proof_options=proof_options,
+                           rc_fix=rc_fix)
         log.append(f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s")
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven
