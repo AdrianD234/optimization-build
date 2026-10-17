@@ -103,7 +103,7 @@ The CPO model capped project starts at 100 per year, which binds in 2026 on the 
 | Q5 | Does the start cap drive the difficulty? | It bound in 2026 | Root LP with and without the cap | answered at the root: no (see above) |
 | Q6 | Where does hardness come from (envelope tightness)? | Slack is about 0.8%; predicts which scenarios will be slow | Envelope sweep $1.5B-$2.5B: root gap and time to 0.1% | queued |
 | Q7 | How does it scale with programme size? | Programmes grow | Project subsets of 150 / 200 / 233 | queued |
-| Q8 | How fast is an incremental re-solve? | Re-optimising after a cost update | Perturb 1-5 projects, warm start, time to 0.1% | queued |
+| Q8 | How fast is an incremental re-solve? | Re-optimising after a cost update | Perturb 1-5 projects, warm start, time to 0.1% | answered (E38): median 1.6 s to 1%, 3.0 s to 0.5% |
 | Q9 | Is a deterministic mode needed (audit)? | The parallel solver can return different equal-value schedules | User decision | needs the user |
 | Q11 | How much of a commercial solver's time is the end-of-programme logic? | In the original model the last build year is decided inside the MIP (per-year activity binaries, indicators, final-year dividend); capopt removes this by fixing L | MindOpt arms on the 3 screening scenarios (one solve at a time, overnight block): M0 original (done); M-fixL original model with the last year fixed; M2 capopt's fixed-L model; optional M-nodiv (no dividend, funding every year, all years penalised: a policy variant compared on time only) | queued (overnight) |
 | Q10 | Fork HiGHS for an in-run cutoff update? | The branching research's most valuable small fork | Decide after the E1/E2 screen | pending E1/E2 |
@@ -159,7 +159,7 @@ The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing no
 | # | Item | Status | Where |
 |---|---|---|---|
 | E37 | `1pct` / `0.5pct` presets: cash-floor bound, threaded last-year screen with early exit, gap-aware ramp-up pruning, honest coarse-gap bounds | ✅ adopted | warm 1% 0.2-0.4 s, warm 0.5% 0.2-6.4 s; cold 9-70 s / 9-120+ s |
-| E38 | Incremental re-solve (Q8): perturb 1-5 projects, warm from the previous plan, with plan repair | queued | `synthetic.perturb_projects`, `solver.repair_schedule` ready |
+| E38 | Incremental re-solve (Q8): perturb 1-5 projects, warm from the previous plan, with plan repair | ✅ repair adopted | median 1.6 s to 1%, 3.0 s to 0.5% over 30 edits; concurrent-proof cancellation; worker memory 620 MB to 29 MB |
 | E39 | Cold-start primal: LP-disagreement LNS (RINS), primal-leaf HiGHS options, LNS-first bursts | queued | the cold rows of E37 are primal-limited |
 | E40 | Start-window tightening (MASTER_PLAN Phase 4) | queued | |
 | E41 | Scaling (Q7, 150/200/233 projects) and every extracted scenario (Q1) | queued | |
