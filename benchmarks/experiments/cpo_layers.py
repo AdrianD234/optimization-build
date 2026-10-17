@@ -12,7 +12,7 @@ Variants ("+" joins layers; "base" = no layer):
     dim-<D>-f<NN>      dimension scoring: objective PV = w_p x PV_D (CPO notebook weights), Total PV >= NN% of PV*
     cls-x<P>           activity class, soft: first four 3-year windows, weights 8:4:2:1, free 10% or the lumpiness
                        floor (largest single-year spend of a member, capped at half the target), slopes 1:4:12; a 1%
-                       shortfall in window 1 costs P% of PV*
+                       shortfall in window 1 costs P% of PV* (of the score at the PV* plan when combined with dim-)
     clshard            the CPO baseline: hard +-10% of realised window spend + $25M, first four windows, min share 2%
     reg-<cost|blend>-x<P>  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
                        floor; target share = cost share, or 50/50 population and cost share (National excluded)
@@ -135,6 +135,10 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
     A = attrs(sc)
     ps = pvstar(sc)
     pv_star_obj = raw["weights"]["pv_weight"] * ps["pv_int"]
+    for part in variant.split("+"):  # prices are a share of the PV the objective maximises (the score under dim-)
+        if part.startswith("dim-"):
+            d = part.split("-")[1]
+            pv_star_obj = raw["weights"]["pv_weight"] * weighted_dim(raw, ps["starts"], A, d, dim_weights(A, d))
     layers: dict = {}
     pv_obj = None
     for part in [] if variant == "base" else variant.split("+"):
