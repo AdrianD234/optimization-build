@@ -193,18 +193,49 @@ def _sb_pick(node: Node, results, cutoff: float = np.inf) -> tuple[Node | None, 
     return best
 
 
+def rc_fixings(model: Model, cutoff: float) -> list[Split]:
+    """E40: start-window tightening by reduced-cost fixing against a cutoff (in objective units). At the root LP
+    optimum z with reduced costs d, every feasible point has value >= z + d_j (x_j - x_j*) (Lagrangian bound). So a step
+    column at 0 with z + d_j above the cutoff can be fixed to 0 ("starts later than option j"), and one at 1 with
+    z - d_j above it can be fixed to 1 ("starts by option j"): every schedule excluded has value >= cutoff. With the
+    cutoff at the target gap (incumbent - rel_gap |incumbent|) the threshold is far looser than at 1e-5. Returns the
+    fixings as splits ([] for the pulse encoding, or if nothing qualifies)."""
+    if model.encoding != "step" or not np.isfinite(cutoff):
+        return []
+    h = _highs(model, [], True, np.inf)
+    h.run()
+    if h.getModelStatus() != highspy.HighsModelStatus.kOptimal:
+        return []
+    sol = h.getSolution()
+    x, d = np.asarray(sol.col_value), np.asarray(sol.col_dual)
+    slack = model.solver_units(cutoff) - h.getInfo().objective_function_value
+    if slack <= 0:
+        return []  # the root LP already reaches the cutoff: nothing to tighten (the caller prunes)
+    margin = slack + 1e-9 * abs(model.solver_units(cutoff)) + 1e-9
+    out: list[Split] = []
+    for p, (opts, cols) in enumerate(zip(model.options, model.start_cols)):
+        for j, c in enumerate(cols):
+            if x[c] < 1e-9 and d[c] > margin:
+                out.append((p, int(opts[j]), 1))
+            elif x[c] > 1 - 1e-9 and -d[c] > margin:
+                out.append((p, int(opts[j]), 0))
+    return out
+
+
 def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: int = 0,
             pool=None, width: int = 1, pruned_bounds: list[float] | None = None,
-            deadline: float = np.inf) -> tuple[list[Node], int]:
+            deadline: float = np.inf, root_splits: list[Split] | None = None) -> tuple[list[Node], int]:
     """Best-first LP tree until `n_leaves` open leaves remain. Returns (leaves sorted by bound, nodes pruned).
     With strong branching on a pool, the `width` best open nodes are expanded together so the pool stays busy.
     pruned_bounds (E37): if given, the LP bounds of the pruned nodes are appended to it, so the caller can report the
     real global bound (a node pruned at a coarse target gap can sit up to that gap below the incumbent).
-    deadline (E37): stop expanding at this wall-clock time; the open nodes become the leaves."""
+    deadline (E37): stop expanding at this wall-clock time; the open nodes become the leaves.
+    root_splits (E40): decisions every node starts from (e.g. reduced-cost fixings)."""
     if pool is not None and sb_candidates >= 1 and width > 1:  # E37: k = 1 (plain branching) batches on the pool too
-        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width, pruned_bounds, deadline)
+        return _ramp_up_batched(model, n_leaves, cutoff, sb_candidates, pool, width, pruned_bounds, deadline,
+                                root_splits)
     pb = pruned_bounds if pruned_bounds is not None else []
-    root = _lp_node(model, [])
+    root = _lp_node(model, list(root_splits or []))
     if root is None:
         return [], 0
     heap = [root]
@@ -231,9 +262,10 @@ def ramp_up(model: Model, n_leaves: int, cutoff: float = np.inf, sb_candidates: 
 
 
 def _ramp_up_batched(model: Model, n_leaves: int, cutoff: float, k: int, pool, width: int,
-                     pruned_bounds: list[float] | None = None, deadline: float = np.inf) -> tuple[list[Node], int]:
+                     pruned_bounds: list[float] | None = None, deadline: float = np.inf,
+                     root_splits: list[Split] | None = None) -> tuple[list[Node], int]:
     pb = pruned_bounds if pruned_bounds is not None else []
-    root = _lp_node(model, [])
+    root = _lp_node(model, list(root_splits or []))
     if root is None:
         return [], 0
     heap = [root]
@@ -520,7 +552,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    lns_alns: bool = False, lns_first: float = 0.0,
                    steal_after: float | None = None, race_after: float | None = None,
                    max_racers: int = 4, proof_options: dict | None = None,
-                   low_priority: bool = False, cancel=None) -> ParallelResult:
+                   low_priority: bool = False, cancel=None, rc_fix: bool = False) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -553,6 +585,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         only when its last copy ends, with the best bound any copy reached. None = off.
     cancel (E38): a threading.Event; once set, the master stops at its next loop and returns what it has (a concurrent
         proof that an improved incumbent made unnecessary).
+    rc_fix (E40): with an incumbent, tighten every project's start window by reduced-cost fixing at the target cutoff
+        before the ramp-up (rc_fixings); the tree (not LNS) works inside the tightened windows.
     low_priority (E36): the worker processes run below normal OS priority (used for concurrent proofs of other last
         years, so the main last year keeps the cores it needs).
     proof_options (E30): HiGHS options set on proof-phase leaves only (those launched with the incumbent cutoff), e.g.
@@ -661,8 +695,16 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         width = max(1, -(-2 * free // max(1, sb_candidates)))  # E23: about 2x the free workers in tasks per round
         # E37: prune at the target gap, not at the incumbent itself (nodes within rel_gap of it are closed anyway)
         pruned_bounds: list[float] = []
+        root_splits: list[Split] = []
+        if rc_fix and best_val.value < np.inf:  # E40: tighten start windows against the target cutoff
+            cut = tol()
+            root_splits = rc_fixings(model, cut)
+            if root_splits:
+                closed.append(cut)  # every schedule the fixings exclude costs at least this
+                log.append(f"reduced-cost fixing: {len(root_splits)} start-window bounds at the target cutoff, "
+                           f"{time.time() - t0:.1f}s")
         leaves, pruned = ramp_up(model, n_leaves, tol(), sb_candidates, sb_pool, width, pruned_bounds,
-                                 deadline=t0 + time_limit)
+                                 deadline=t0 + time_limit, root_splits=root_splits)
         if pruned_bounds:
             closed.append(min(pruned_bounds))
         log.append(f"ramp-up: {len(leaves)} leaves, {pruned} pruned, {time.time() - t0:.1f}s")
