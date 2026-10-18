@@ -60,10 +60,11 @@ REG_WEIGHTS = [4.0, 2.0, 1.0]
 REG_SPANS5 = [(0, c - 1) for c in (5, 10, 15, 20, 25, 30)]
 REG_WEIGHTS5 = [0.5 ** ((c - 5) / 10) for c in (5, 10, 15, 20, 25, 30)]
 NORM_FLOOR = 2_500.0  # $25M in $0.01M units
-# the chosen defaults (EXPERIMENTS.md "Distribution layers: recommended defaults"): class at x = 0.01%, region on the
-# 50/50 population/cost blend basis at x = 0.01% (cheaper and faster than cost share, E46/E47b; cost share stays a
-# variant); dimension scoring is opt-in per run (dim-INC-fNN, f from the frontier)
-DEFAULT_VARIANT = "cls-x0.01+reg-blend-x0.01"
+# the chosen defaults (EXPERIMENTS.md "Distribution layers: recommended defaults"): class at x = 0.01%; region on the
+# user's early-horizon population profile (E56): 100% population share at cumulative checkpoints 5 and 10 only, +-10%
+# free, x = 0.01% (as fast as the blend, cheaper than cost share, near-exact population fairness in the first decade);
+# the blend and cost-share bases stay variants; dimension scoring is opt-in per run (dim-INC-fNN, f from the frontier)
+DEFAULT_VARIANT = "cls-x0.01+reg-pop-x0.01-at5_10-tol10"
 
 
 def _arg(flag: str, default: str) -> str:
