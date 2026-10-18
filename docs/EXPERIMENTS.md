@@ -1025,7 +1025,7 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **The triple stays fragile and depends on the scenario and the basis.**
   * Blend: certifies on CFADS, but not on s2000.
   * Cost share: the other way round.
-* **Recommendation:** two layers for routine certified runs. For the triple, the 0.5% preset is a stretch within 2 minutes. Either accept a 1-3% certified gap there, or add the mega-project start-year enumeration (not built).
+* **Recommendation:** two layers for routine certified runs. For the triple, the 0.5% preset is a stretch within 2 minutes. Accept a 1-3% certified gap there. Mega-project start enumeration was tried in E49 and did not help: the gap is in the bound.
 * **Regional price frontiers** (s2000_P50, both bases, x swept up, chained, `1pct`; the first point starts cold):
 
 | x | Cost basis: s | Total PV | Cost shortfall c10/c20 | Blend basis: s | Total PV | Blend shortfall c10/c20 |
@@ -1056,7 +1056,10 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 | All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
 
 * **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
-* **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap), so certification depends on the primal side. The next lever, untested, is to enumerate the start years of the 2-4 largest projects as an outer loop (MULTI_OBJECTIVE §2). The hard CFADS cases (cost-share region, the triple) are where it would show.
+* **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap).
+  * Easy cases certify once the primal side finds a low-penalty schedule.
+  * The hard CFADS cases (cost-share region, the triple) are bound-limited: E49 pooled 18 runs and still had a 0.6-0.85% gap.
+  * Branching on the mega-projects first (E49) did not help. The next lever is cuts on the shortfall rows.
 * **Not done:**
   * 5-yearly checkpoints and a worst-case regional term;
   * lexicographic polish inside frontier sweeps (it costs about 100 s a point for HSP);
