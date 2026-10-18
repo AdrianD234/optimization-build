@@ -869,5 +869,5 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **Verdict (A1)**:
   * Dimension scoring works as a soft tilt. INC is the dimension worth offering: +2.8-5.5% raw INC PV for 0.7-2.9% of Total PV.
   * The 85-90% floors are irrelevant on these scenarios, because the unconstrained tilt never goes below 96%. A useful floor sits at or above f_free (0.96-0.99), and there it binds and slows certification sharply.
-  * Recommended default: **INC at f = 0.97** (it binds just under f_free, so PV stays at or above 97%), with a lexicographic polish when the point is reported.
+  * Recommended default: **INC**, with a lexicographic polish whenever a point is reported. The floor value comes from the Stage C frontier, which sweeps f downward from 1.0 to 0.96.
   * Time: plan on 15-50 s to 1% and 20-60 s to 0.5%, cold or warm.
