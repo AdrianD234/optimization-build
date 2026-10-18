@@ -15,7 +15,7 @@ Variants ("+" joins layers; "base" = no layer):
                        floor (largest single-year spend of a member, capped at half the target), slopes 1:4:12; a 1%
                        shortfall in window 1 costs P% of PV* (of the score at the PV* plan when combined with dim-)
     clshard            the CPO baseline: hard +-10% of realised window spend + $25M, first four windows, min share 2%
-    reg-<cost|blend>-x<P>[-opts]  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
+    reg-<cost|blend|pop>-x<P>[-opts]  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
                        floor; target share = cost share, or 50/50 population and cost share (National excluded)
 
 Options (-tolNN, -lumpwin, -lumpnone, -carveN, -endo): see layer_opts. The metrics measure every plan against the same
@@ -133,11 +133,12 @@ def layer_opts(bits: list[str], tol: float) -> tuple[dict, set]:
     """Variant options after the price: -tolNN (free tolerance %), -lumpwin (the approved floor: the largest spend one
     member can put in the span, uncapped), -lumpnone, -carveN (the N largest projects leave the targets), -endo (target
     = share of what the covered projects actually spend, instead of the fixed entitlement). Region only: -cp5
-    (5-yearly checkpoints), -wcX (worst-case term: the worst region's normalised shortfall, 1% of it costs X% of PV*)."""
+    (5-yearly checkpoints), -wcX (worst-case term: the worst region's normalised shortfall, 1% of it costs X% of PV*),
+    -atY[_Y2] (checkpoints at those years only, e.g. at5_10: the user's early-horizon population profile, E56)."""
     kw: dict = {"tol": tol}
     carve: set = set()
     for b in bits:
-        if b == "cp5" or b.startswith("wc"):
+        if b == "cp5" or b.startswith("wc") or b.startswith("at"):
             continue  # region-only options, read by build_variant
         if b.startswith("tol"):
             kw["tol"] = float(b[3:]) / 100.0
@@ -165,6 +166,10 @@ def region_shares(raw: dict, A: dict, basis: str, exclude: set[int] = frozenset(
     cs = {k: cs_all[k] / pool for k in gov}
     if basis == "cost":
         sh = cs
+    elif basis == "pop":  # E56: the user's population-only profile (early checkpoints only, see -atY)
+        pop = A["population_thousands"]
+        tp = sum(pop[k] for k in gov)
+        sh = {k: pop[k] / tp for k in gov}
     else:
         pop = A["population_thousands"]
         tp = sum(pop[k] for k in gov)
@@ -216,6 +221,10 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
             kw, carve = layer_opts(bits[3:], 0.20)
             g, sh = region_shares(raw, A, bits[1], exclude=mega(raw, next(iter(carve))) if carve else set())
             spans, weights = (REG_SPANS5, REG_WEIGHTS5) if "cp5" in bits else (REG_SPANS, REG_WEIGHTS)
+            at = [b for b in bits[3:] if b.startswith("at")]
+            if at:  # E56: cumulative checkpoints at the given years only (e.g. at5_10), decay half per decade
+                ys = [int(y) for y in at[0][2:].split("_")]
+                spans, weights = [(0, y - 1) for y in ys], [0.5 ** ((y - ys[0]) / 10) for y in ys]
             rows = LY.allocation_rows(raw, g, sh, spans, weights, float(bits[2][1:]), pv_star_obj,
                                       norm_floor=NORM_FLOOR, prefix="region:", **kw)
             layers.setdefault("shortfall", []).extend(rows)
@@ -309,6 +318,8 @@ def metrics(sc: str, starts: dict) -> dict:
         g, sh = region_shares(raw, A, basis)
         out[f"region_{basis}"] = short(g, sh, REG_SPANS, REG_WEIGHTS, 0.20)
         out[f"region_{basis}_5y"] = short(g, sh, REG_SPANS5, REG_WEIGHTS5, 0.20)  # bunching check (E51)
+    g, sh = region_shares(raw, A, "pop")  # E56 yardstick: population share at years 5 and 10, 20% free
+    out["region_pop"] = short(g, sh, [(0, 4), (0, 9)], [1.0, 0.5 ** 0.5], 0.20)
     return out
 
 
@@ -418,7 +429,7 @@ def compact(names: list[str]) -> None:
     """One line per run: seconds (> = not certified), certified gap, PV retained, INC/HSP score, and the class and
     regional shortfalls (worst %, first two windows / checkpoints) against the default rows."""
     print("scenario | variant | mode | preset | s | gap | PV | score | class w1/w2 | reg cost c10/c20 | reg blend c10/c20 | "
-          "blend worst 5-yearly")
+          "blend worst 5-yearly | pop y5/y10")
     for (sc, v, pr, mode, _), r in _records(names):
         if not r.get("starts"):
             print(f"{sc} | {v} | {mode} | {pr} | >{r['time_limit']:.0f} | - | no schedule")
@@ -433,7 +444,7 @@ def compact(names: list[str]) -> None:
         t = f"{r['seconds']:.1f}" if r["proven"] else f">{r['time_limit']:.0f}"
         w5 = max(x["worst_pct"] for x in m["region_blend_5y"])
         print(f"{sc} | {v} | {mode} | {pr} | {t} | {gap * 100:.2f}% | {m['pv_retained'] * 100:.2f}% | {sc_txt} | "
-              f"{two('class')} | {two('region_cost')} | {two('region_blend')} | {w5:.0f}")
+              f"{two('class')} | {two('region_cost')} | {two('region_blend')} | {w5:.0f} | {two('region_pop')}")
 
 
 def main() -> int:
