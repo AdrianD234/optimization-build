@@ -179,12 +179,12 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 
 | # | Item | Status | Where |
 |---|---|---|---|
-| E44 | Dimension scoring (ε-constraint, CPO notebook weights), INC and HSP x f ∈ {0.85, 0.90}; anchors f ∈ {0.99, 1.0} | ◐ A1 done, anchors running | f = 0.85 / 0.90 never bind; 15-50 s to 1% (warm does not help); HSP poor trade |
+| E44 | Dimension scoring (ε-constraint, CPO notebook weights), INC and HSP x f ∈ {0.85, 0.90}; anchors f ∈ {0.99, 1.0} | ✅ A1 | f = 0.85 / 0.90 never bind (f_free 0.96-0.99); 15-50 s to 1%; a binding floor (f ≥ 0.99) is slow and f = 1 pathological; INC worth offering, HSP a poor trade |
 | E44 | Lexicographic polish (MULTI_OBJECTIVE §1) | ◐ probe | recovers up to 2.3 points of Total PV at the same score, but about 100 s |
 | E44 | `best_first` / `warm_triage` for warm plans from another objective | ◐ opt-in | mixed over 2 seeds |
-| E45 | Activity class: soft (x = 0.01%, 0.1%) vs the CPO's hard ±10% bands | queued | |
-| E46 | Region: cost share vs 50/50 population blend (x = 0.01%) | queued | |
+| E45 | Activity class: soft default vs window floor, mega carve-out, carve-out + endogenous base, and the CPO's hard ±10% bands | ✅ A2 | soft default: 0.2-0.5% PV, w2 shortfall 0, 1% in 24-32 s cold; hard bands 1.0-1.3% PV, uncertified on s2000 in 120 s |
+| E46 | Region: cost share vs 50/50 population blend, carve-out, endogenous base (x = 0.01%) | running | |
 | E47 | Blends: dim+class, class+region, all three | queued | |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
-| — | Endogenous base, 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ❌ | refinements after E45-E47 |
+| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | the last three not tried |

@@ -6,7 +6,8 @@
            [--arms {"triage": {"warm_triage": true}}]
            [--modes warm,cold] [--seeds 0,1] [--time-limit 120]
     python benchmarks/experiments/cpo_layers.py summary <name> [<name> ...]     times + layer metrics per cell
-    python benchmarks/experiments/cpo_layers.py frontier <name>                 PV retained vs layer metric per price
+    python benchmarks/experiments/cpo_layers.py frontier <name> --scenario sc --variants v1,v2,... [--preset 1pct]
+           [--first cold|warm] [--options {...}]   a chained sweep: each point warm-starts from the previous one
 
 Variants ("+" joins layers; "base" = no layer):
     dim-<D>-f<NN>      dimension scoring: objective PV = w_p x PV_D (CPO notebook weights), Total PV >= NN% of PV*
@@ -332,6 +333,37 @@ def spec(name: str) -> Path:
     return out
 
 
+def frontier_spec(name: str) -> Path:
+    """Stage C: a chained sweep. Runs go in the order given and each warm-starts from the previous run's result (its
+    record carries "starts"); the first starts from `--first` (cold, or warm from the CPO plan). Sweeping in the
+    direction that loosens the problem (a lower PV floor, a higher price) makes the previous plan a free start
+    (MULTI_OBJECTIVE_LAYERS §4)."""
+    variants = _arg("--variants", "").split(",")
+    sc = _arg("--scenario", "cfadsds_P50")
+    pr = _arg("--preset", "1pct")
+    tl = float(_arg("--time-limit", "180"))
+    first = _arg("--first", "cold")
+    extra = json.loads(_arg("--options", "{}"))
+    out_dir = CPO / "results" / name
+    runs, prev = [], None
+    for v in variants:
+        path = build_variant(sc, v)[1]
+        ref = path.with_name(path.stem + "_ref.json")
+        label = f"{sc}__{v}__{pr}__chain__seed0"
+        o = {"preset": pr, "seed": 0, **extra}
+        if prev is not None:
+            o["warm_start"] = str(out_dir / f"{prev}.json")
+        elif first == "warm":
+            o["warm_start"] = str(ref)
+        runs.append({"instance": str(path), "reference": str(ref), "time_limit": tl, "options": o, "label": label})
+        prev = label
+    out = CPO / "campaigns" / f"{name}.spec.json"
+    out.write_text(json.dumps({"name": name, "time_limit": tl, "runner": "capopt.campaign:reference_runner",
+                               "out_dir": str(out_dir), "runs": runs, **QUIET}, indent=1), encoding="utf-8")
+    print(f"{out}: {len(runs)} runs")
+    return out
+
+
 def _records(names: list[str]):
     for name in names:
         for f in sorted((CPO / "results" / name).glob("*__seed*.json")):
@@ -376,6 +408,8 @@ def main() -> int:
         print(path)
     elif cmd == "spec":
         spec(sys.argv[2])
+    elif cmd == "frontier":
+        frontier_spec(sys.argv[2])
     elif cmd == "summary":
         summary([a for a in sys.argv[2:] if not a.startswith("--")])
     elif cmd == "metrics":
