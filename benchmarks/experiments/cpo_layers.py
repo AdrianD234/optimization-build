@@ -56,6 +56,10 @@ CLASS_WEIGHTS = [0.5 ** (3 * w / 10) for w in range(4)]
 REG_SPANS = [(0, 9), (0, 19), (0, 29)]
 REG_WEIGHTS = [4.0, 2.0, 1.0]
 NORM_FLOOR = 2_500.0  # $25M in $0.01M units
+# the chosen defaults (EXPERIMENTS.md "Distribution layers: recommended defaults"): class at x = 0.01%, region on the
+# 50/50 population/cost blend basis at x = 0.01% (cheaper and faster than cost share, E46/E47b; cost share stays a
+# variant); dimension scoring is opt-in per run (dim-INC-fNN, f from the frontier)
+DEFAULT_VARIANT = "cls-x0.01+reg-blend-x0.01"
 
 
 def _arg(flag: str, default: str) -> str:

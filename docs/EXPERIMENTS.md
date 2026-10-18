@@ -1055,6 +1055,7 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 | Two layers | class + region | as above | 0.3-1.3% | 18-89 s / 32-79 s |
 | All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
 
+* **Chosen default (2026-10-19): class at x = 0.01% and region on the blend basis at x = 0.01%** (`cpo_layers.DEFAULT_VARIANT`). The blend was cheaper and faster on both scenarios, and cost-share targets are circular: the pipeline sets its own target (MULTI_OBJECTIVE §3). Cost share remains a variant (`reg-cost-x0.03`).
 * **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
 * **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap).
   * Easy cases certify once the primal side finds a low-penalty schedule.
