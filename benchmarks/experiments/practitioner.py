@@ -13,6 +13,7 @@ every run, caches each run's record, and writes tidy chart data):
     warm_envelopes  E63 warm starts across funding envelopes (CFADS <-> CFADS-DS, scaled)
     time_to_gap     E64 time to certified 1% / 0.5% / 0.1% and to a 1e-5 proof
     loop            E65 the optioneering loop: pin a third, re-optimise, tweak, final proof
+    existing        E64 stored evidence: the time-to-gap numbers already measured, in one table
 
 Runs go to private/cpo/results/prac/<command>/<label>.json; instances to private/cpo/instances/prac/; chart data and
 tables to private/report_data/<command>/. Real data (project names included) stays under private/ (gitignored); the
@@ -735,6 +736,43 @@ def cmd_time_to_gap() -> None:
     print(json.dumps(rows, indent=1))
 
 
+def cmd_existing() -> None:
+    """E64 (stored evidence): the time-to-gap numbers already measured, gathered into one tidy table. Certified times
+    come from the presets' final table (1%, 0.5%; 3 seeds, median and range) and the E37 0.1% log (1 seed); proof times
+    to a 1e-5 gap from the official KPI campaign's milestones (median of 3 seeds, warm from the CPO plan)."""
+    import glob
+    import statistics
+    rows = []
+    res = CPO / "results"
+    for arm, target in (("p1", "1pct"), ("p05", "0.5pct")):
+        cells: dict = {}
+        for f in glob.glob(str(res / "final_presets" / f"*__{arm}__*.json")):
+            d = json.loads(Path(f).read_text(encoding="utf-8"))
+            sc, _, mode, _ = Path(f).stem.split("__")
+            cells.setdefault((sc, mode), []).append(d["seconds"] if d["proven"] else None)
+        for (sc, mode), v in sorted(cells.items()):
+            ok = [x for x in v if x is not None]
+            rows.append({"scenario": sc, "mode": mode, "target": target, "source": "final presets table (E37-E42)",
+                         "seeds": len(v), "certified_runs": len(ok),
+                         "median_s": statistics.median([x if x is not None else 300.0 for x in v]),
+                         "min_s": min(ok) if ok else None, "max_s": max(ok) if len(ok) == len(v) else None,
+                         "kind": "certified gap"})
+    for f in sorted(set(glob.glob(str(res / "e37_p01*" / "*__p01__*.json")))):
+        d = json.loads(Path(f).read_text(encoding="utf-8"))
+        sc, _, mode, _ = Path(f).stem.split("__")
+        rows.append({"scenario": sc, "mode": mode, "target": "0.1pct", "source": f"E37 0.1% log ({Path(f).parent.name})",
+                     "seeds": 1, "certified_runs": int(bool(d["proven"])),
+                     "median_s": d["seconds"] if d["proven"] else None, "time_limit": d.get("time_limit"),
+                     "kind": "certified gap"})
+    ms = json.loads((res / "milestones.json").read_text(encoding="utf-8"))
+    for sc, m in ms.items():
+        rows.append({"scenario": sc, "mode": "warm", "target": "proof_1e-5", "source": "official KPI milestones",
+                     "seeds": m["seeds"], "median_s": m["proof"] if np.isfinite(m["proof"]) else None,
+                     "time_limit": m["limit"], "copt_logged_s": m.get("copt"), "kind": "proven (gap 1e-5)"})
+    write_csv(REPORT / "time_to_gap" / "existing_time_to_gap.csv", rows)
+    print(f"{len(rows)} rows")
+
+
 # ---- E65: the optioneering loop ------------------------------------------------------------------------------------
 
 def cmd_loop() -> None:
@@ -797,7 +835,7 @@ def cmd_loop() -> None:
 
 COMMANDS = {"windows": cmd_windows, "sequencing": cmd_sequencing, "shapes": cmd_shapes, "growth": cmd_growth,
             "override": cmd_override, "small_moves": cmd_small_moves, "warm_envelopes": cmd_warm_envelopes,
-            "time_to_gap": cmd_time_to_gap, "loop": cmd_loop}
+            "time_to_gap": cmd_time_to_gap, "loop": cmd_loop, "existing": cmd_existing}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
