@@ -486,8 +486,9 @@ def solve_reference_highs(name: str, time_limit: float = 900.0, threads: int = 0
 PRESETS.update({
     # E39/E42: 12 LNS workers (cold is LNS-limited: -11% pooled over 5 seeds), started after the ramp-up so warm
     # strong branching has all workers (-10% warm 0.5% on the envelope scenarios; cold has no incumbent to search yet)
+    # E55: root MIR cuts on the layers' shortfall rows (act only on instances with distribution layers)
     "1pct": dict(rel_gap=1e-2, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=12,
-                 lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0),
+                 lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5),
     "0.5pct": dict(rel_gap=5e-3, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=12,
-                   lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0),
+                   lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5),
 })
