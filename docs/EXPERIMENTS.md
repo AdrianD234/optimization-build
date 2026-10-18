@@ -1214,3 +1214,36 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * The default-style pair certifies 0.5% three times faster.
   * The cuts tighten the LP where the Jensen gap lives: the rows themselves. Branching on the largest projects (E49) and stronger strong branching (E50) could not do that.
 * **Verdict: adopted.** Both presets now run `layer_cuts=5`. It only acts on instances with layers, so the no-layer presets and their final table are unchanged. Covered by the existing preset tests.
+
+### E54: final table for the chosen default layers (all 10 CPO scenarios)
+
+* **Setup.**
+  * Layers: `cls-x0.01+reg-pop-x0.01-at5_10-tol10` (`cpo_layers.DEFAULT_VARIANT`): class x = 0.01%, plus the population profile at years 5 and 10, ±10%, x = 0.01%.
+  * Presets as merged after E55, which run 5 rounds of shortfall MIR cuts.
+  * Warm runs start from the CPO's stored Total plan with `warm_triage`; cold runs have no plan.
+  * 1 seed, 120 s cap, load-clean. PV\* for the eight new scenarios comes from the `0.5pct` preset on their base instance (warm).
+* Shortfalls are the worst of each layer's own yardstick (class windows 1-2; population share at years 5 and 10).
+
+| Scenario | warm 1% | warm 0.5% | cold 1% | cold 0.5% | Total PV | worst class w1-w2 | worst pop y5-y10 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50high | 29.0 | 40.0 | 36.4 | 39.0 | 99.7% | 9-10% | 0-8% |
+| s2000_P50 | 29.6 | 41.8 | 20.0 | 37.9 | 99.3-99.8% | 10-11% | 0% |
+| cfadsds_P50 | 33.6 | 70.0 | 31.7 | 41.9 | 99.1% | 0% | 0-11% |
+| cfadsds_P50high | 34.8 | 57.2 | 34.0 | 61.8 | 99.0-99.2% | 0-1% | 0-9% |
+| cfadsds_P95 | >120 (1.85%) | >120 (1.84%) | 67.7 | >120 (1.24%) | 99.1% | 0-7% | 12-25% |
+| cfadsds_P95high | 94.6 | >120 (1.28%) | 79.8 | >120 (0.89%) | 99.0-99.2% | 0% | 7-19% |
+| cfads_P50 | 16.6 | 19.1 | 15.6 | 16.4 | 99.6% | 0-2% | 0-6% |
+| cfads_P95 | 28.6 | 28.9 | 19.7 | 25.1 | 99.3-99.4% | 0-7% | 0-7% |
+| s1750_P50 | >120 (1.30%) | >120 (1.03%) | 108.9 | >120 (1.19%) | 99.4-99.8% | 2-4% | 0-3% |
+| s1750_P95 | >120 (1.03%) | >120 (0.78%) | >120 (1.04%) | >120 (0.98%) | 98.9-99.5% | 0-10% | 0-12% |
+| **shifted geo. mean** (unproven at 120) | 51.0 | 63.3 | 43.9 | 58.6 | | | |
+
+* **The default layers cost 0.2-1.1% of Total PV on every scenario.**
+  * Class shortfalls go from 16-48% (the Total plan) to 0-11%.
+  * The worst population shortfall at years 5/10 goes from 55-80% to 0-12%, and 25% on the hardest case.
+* **Cold, a certified 1% within 2 minutes on 9 of 10 scenarios (16-109 s), and 0.5% on 6 of 10.**
+  * The misses are the CFADS P95 pair at 0.5% and the s1750 pair. s1750_P95 is also the outlier without layers (more than 300 s cold).
+  * Their certified gaps at 120 s are 0.8-1.9%.
+* **Warm from the stored Total plan is no faster than cold** (shifted geometric means 51 / 63 s against 44 / 59 s). That plan is far from the layered optimum, so a layered solve is effectively a cold solve.
+  * Day-to-day use: a previous *layered* plan is the warm start that helps, the E38 situation.
+* **Against the presets without layers** (final table, cold): 1% shifted geometric mean 22.7 → 43.9 s, 0.5% 34.8 → 58.6 s. The layers roughly double the time to a certified answer.
