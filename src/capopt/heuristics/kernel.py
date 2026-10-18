@@ -35,6 +35,8 @@ class Packed:
 
 
 def pack(inst: Instance, L: int | None = None) -> Packed:
+    if inst.layers is not None:
+        raise NotImplementedError("the numba kernel does not score distribution layers")
     n, T = inst.n, inst.T
     D = max(len(s) for s in inst.spend)
     spend = np.zeros((n, D), dtype=np.int64)

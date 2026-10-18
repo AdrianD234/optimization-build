@@ -167,3 +167,24 @@ The user decided that 1e-5 proofs and a HiGHS C++ fork are not worth pursuing no
 | E41 | Scaling (Q7, 100/150/200/233 projects) and every extracted scenario (Q1) | ✅ answered | time does not grow with size; smaller programmes at equal tightness are harder (lumpier packing) |
 
 **Status of the certified-gap track (2026-10-17): converged.** Both presets are merged and measured (EXPERIMENTS.md "Final table"). E39-E43 found no further lever beyond seed noise. Open direction for cold starts: a new primal method, such as cash-balanced compound moves (H10, reopened only in that form) or a donor plan from a sibling scenario (H14), rather than more tuning.
+
+## Distribution layers track (from 2026-10-18)
+
+The user's next goal is to bring the CPO's three distribution extensions into capopt, in order: dimension scoring, then activity class, then regional fairness. Soft forms are agreed. The approach is fail-fast:
+1. each layer's low-hanging fruit alone;
+2. then blends;
+3. then calibrate one PV-equivalent knob per layer and draw the frontiers.
+
+Timing uses the certified-gap presets. The research note behind the queue is [research/MULTI_OBJECTIVE_LAYERS.md](research/MULTI_OBJECTIVE_LAYERS.md).
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| E44 | Dimension scoring (ε-constraint, CPO notebook weights), INC and HSP x f ∈ {0.85, 0.90}; anchors f ∈ {0.99, 1.0} | ✅ A1 | f = 0.85 / 0.90 never bind (f_free 0.96-0.99); 15-50 s to 1%; a binding floor (f ≥ 0.99) is slow and f = 1 pathological; INC worth offering, HSP a poor trade |
+| E44 | Lexicographic polish (MULTI_OBJECTIVE §1) | ◐ probe | recovers up to 2.3 points of Total PV at the same score, but about 100 s |
+| E44 | `best_first` / `warm_triage` for warm plans from another objective | ◐ opt-in | mixed over 2 seeds |
+| E45 | Activity class: soft default vs window floor, mega carve-out, carve-out + endogenous base, and the CPO's hard ±10% bands | ✅ A2 | soft default: 0.2-0.5% PV, w2 shortfall 0, 1% in 24-32 s cold; hard bands 1.0-1.3% PV, uncertified on s2000 in 120 s |
+| E46 | Region: cost share vs 50/50 population blend, carve-out, endogenous base (x = 0.01%) | running | |
+| E47 | Blends: dim+class, class+region, all three | queued | |
+| — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
+| — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
+| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | the last three not tried |

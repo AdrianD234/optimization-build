@@ -97,7 +97,8 @@ def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     """Exact optimum by enumeration (tiny instances only)."""
     from .evaluate import objective
     from .heuristics import kernel as K
-    pk = K.pack(inst)
+    exact = inst.cash_cap is not None or inst.layers is not None  # the compiled kernel knows neither
+    pk = None if exact else K.pack(inst)
     sizes = [len(a) for a in inst.allowed]
     if np.prod(sizes, dtype=float) > 2e6:
         raise ValueError("too many schedules to enumerate")
@@ -106,8 +107,8 @@ def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
         st = np.array([inst.allowed[p][j] for p, j in enumerate(idx)], dtype=np.int64)
         if np.bincount(st, minlength=inst.T).max() > inst.max_starts:
             continue
-        # the compiled kernel knows no hard cash cap; capped instances use the exact evaluator instead
-        v = K.cost(pk, st, inst.penalised) if inst.cash_cap is None else objective(inst, st)
+        # the compiled kernel knows no hard cash cap or layers; those instances use the exact evaluator instead
+        v = objective(inst, st) if exact else K.cost(pk, st, inst.penalised)
         if v < best:
             best, arg = v, st
     return best, arg

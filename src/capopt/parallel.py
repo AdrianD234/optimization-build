@@ -128,7 +128,9 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             cold.run()
             status = cold.getModelStatus()
             if status not in (highspy.HighsModelStatus.kOptimal, highspy.HighsModelStatus.kInfeasible):
-                raise RuntimeError(f"node LP ended with status {cold.modelStatusToString(status)}")
+                # E44: a numerically hard node LP (seen with a PV floor at exactly PV*): keep the node open with no
+                # bound and nothing to branch on, so it becomes a MIP leaf; never prune it, never fail the solve
+                return Node(-np.inf, splits, [], 0)
             h_used = cold
         else:
             h_used = h
@@ -962,7 +964,7 @@ def _finish(best_val, best_starts, closed, trace, t0, leaves, pruned, log, respl
     best = best_val.value
     dual = min(closed + [best])
     starts = np.array(best_starts[:], dtype=np.int64) if best < np.inf else None
-    proven = dual >= best - rel_gap * abs(best)
+    proven = dual >= (best - rel_gap * abs(best) if best < np.inf else np.inf)  # no schedule: proven if none exists
     mono, run = [], np.inf
     for t, v in sorted(trace):
         if v < run:

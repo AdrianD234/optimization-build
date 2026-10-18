@@ -784,3 +784,130 @@ The `1pct` and `0.5pct` presets as merged after E37-E42: lp screen; 24 leaves wi
 | s1750_P95 | 164 / >300 | 154 / >300 |
 
 * **Verdict**: within seed noise; it does not fix the s1750_P95 outlier. Leaves that do get past the root still find nothing on that scenario (E39), so the outlier is down to LNS luck. The option stays opt-in and off.
+
+## Distribution layers (from 2026-10-18)
+
+The user's next goal after total-PV optimisation: bring the Capital Programme Optimiser's three "distribution" extensions into capopt and test them in layers, **dimension scoring, then activity-class adherence, then regional fairness**. Soft forms are agreed. Each layer is linear and adds only continuous columns (no binaries), so the fixed-last-year decomposition, the cash-floor bound, ALNS and the certified-gap presets all carry over: the spend in a window does not depend on the last build year, so MIP(L) still equals the true objective at a schedule's own L and overstates it at a later one.
+
+### The layers in capopt (`capopt.layers`)
+
+An instance may carry a `layers` section, which `evaluate` scores exactly and `last_year_model` builds as rows. Workers reload instances from disk, so a layered instance is just another JSON file. There are three primitives:
+
+* **PV floor** (hard): `sum_p pv_floor[p][start_p] >= min`. This is the epsilon constraint of dimension scoring. The objective's `pv_int` becomes the dimension-weighted PV, and the floor applies to the Total PV.
+* **Shortfall rows** (soft): `deficit = max(0, target - free - spend_S(a..b))`, charged in convex piecewise-linear segments. The target is a **fixed** base (the funding entitlement), so the rows stay linear. Shares of realised spend would be a ratio of decision variables, which is not linear. The penalty is **shortfall-only**: shares sum to 1, so a two-sided penalty would charge every misallocation twice.
+* **Hard bands**: `|spend_S - s * spend_all| <= tol * s * spend_all + floor` around a share of *realised* spend. This is the CPO's activity-class baseline. It is linear because both sides are linear in the starts.
+
+The generic allocation layer (`allocation_rows`) serves both class and region:
+
+* **Target:** `s * B_w`. B_w is the funding that falls in window w, with cumulative funding capped at the programme's total cost.
+* **Free zone:** within `max(tol * target, the largest spend one member can put in the window)`, the lumpiness floor.
+* **Beyond the free zone:** slopes 1 : 4 : 12, with breakpoints at 10% and 20% of `N = max(target, $25M)`. These are the CPO's regional breakpoints (20/30/40% of N with a 20% free zone).
+* **Window weights:** decaying.
+* **Pricing in PV-equivalent units:** one knob per layer. A deficit of 1% of N in the first window, on the first slope, costs **x% of PV\*** (`pv_weight x PV*`). Later windows scale by their weight.
+
+The CPO's calibrated regional λ (γ = 4) corresponds to about x = 0.01% for a representative region.
+
+**Data.** `tools/extract_cpo_attrs.py` reads the CPO's files without writing to them and writes `private/cpo/attributes/` (gitignored):
+
+* per-dimension PV at every allowed start, discounted exactly as the Total PV, and PV0, the PV of a year-0 start used in the notebook's weights;
+* the Activity Class and Region columns of the Costs sheet;
+* the population capsule from the CPO's per-capita branch (approximate Stats NZ 2024).
+
+Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the five dimensions sum to it within 4e-7.
+
+**Fix found on the way.** When MIP(Lmin) has no schedule at all, which a hard layer can cause, the cutoff `inf - rel_gap * inf` was NaN. Every comparison with NaN is False, so every other last year was "LP-pruned" and the solve returned no schedule. Cutoffs without an incumbent are now +inf. An infeasible last year counts as proven, and a survivor that an earlier survivor's schedule prunes is skipped. Both are tested against brute force with layers.
+
+**Timing protocol.** Same as the final table: the `1pct` / `0.5pct` presets, warm (from the CPO's stored Total plan, the "turn a layer on" workflow) and cold, 120 s cap, 2 seeds.
+
+* Scenarios: s2000_P50 (flat envelope) and cfadsds_P50 (CFADS).
+* PV\*: the Total PV of the `0.5pct` preset's base plan. It is certified within 0.43% (s2000_P50) and 0.14% (cfadsds_P50) on the objective, which is 99.95% PV, so PV\* is accurate to about 0.4% of PV.
+* Campaigns run from a frozen git worktree, so later edits cannot leak into timed runs.
+* Since 2026-10-18 OneDrive's sync keeps about 1 core of 20 busy. The quiet gate allows 2 outside cores, with no reruns, and the load tags record the outside load.
+
+### E44: dimension scoring (Stage A1)
+
+* **Formulation** (the CPO notebook's `weights_for_dimension`):
+  * The objective's PV becomes `w_p x PV_D(p, start)`. The weight is `w_p = (PV0_D / mean PV0 of the other four dimensions) x (percentile rank of PV0_D)^0.5`, normalised to mean 1 and clipped to [1, 2]. PV0 is the PV of a year-0 start.
+  * The carry tiers stay in the objective.
+  * PV floor: `Total PV >= f x PV*`.
+  * Metrics:
+    * **PV retained**: Total PV / PV\*.
+    * **Raw dimension PV**: PV_D against the PV\* plan.
+    * **Score**: the objective's weighted `sum w_p PV_D` against the PV\* plan.
+* **Choice of dimensions.** All five dimensions correlate 0.91-1.00 with Total PV across projects at the CPO plan. INC is the least correlated. HSP is the largest (26% of PV) and has the most weight at the 2.0 cap (27% of projects).
+* **Result** (median of 2 seeds, seconds to the certified gap; `>` = most seeds hit the 120 s cap; f = 0.85 shown, f = 0.90 is within seed noise of it):
+
+| Scenario | Layer | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | PV retained | Raw dim PV | Score |
+|---|---|---|---|---|---|---|---|---|
+| s2000_P50 | none | 18.7 | 28.8 | 0.4 | 2.0 | 100% | | |
+| s2000_P50 | INC | 29.5 | 39.4 | 32.7 | 44.3 | 98.6-99.3% | +4.8-5.5% | +10.2-10.8% |
+| s2000_P50 | HSP | 47.8 | >120 | >120 | >120 | 95.8-97.8% | 0 to +1.3% | +5.1-5.2% |
+| cfadsds_P50 | none | 17.9 | 31.2 | 0.3 | 0.3 | 100% | | |
+| cfadsds_P50 | INC | 15.1 | 22.0 | 15.7 | 22.8 | 97.1% | +2.8% | +7.7% |
+| cfadsds_P50 | HSP | 31.5 | 56.5 | 19.1 | 43.0 | 96.4-98.2% | +0.3-0.9% | +2.4-4.7% |
+
+* **f = 0.85 and 0.90 never bind.** Unconstrained dimension scoring already keeps 95.8-99.3% of Total PV (f_free = 0.96-0.99), so both floors leave the problem unchanged.
+* **Time to a certified gap.** The layer costs 15-50 s to 1% and 22 s to more than 120 s to 0.5%, against 0.3-2 s warm without it.
+  * A warm start from the Total plan helps little or not at all. That plan is 4-8% off the score optimum, so the run is effectively cold.
+  * The gap is now relative to the score, which is about 26-29% of Total PV. A 1% certified gap on the score is therefore about 0.3% of Total PV: a tighter absolute target than the base preset's.
+* **HSP is a poor trade and hard to certify.**
+  * Its weights shift value toward HSP-specialist projects, so the score rises 2.4-5.2% while raw HSP PV hardly moves (0 to +1.3%), for 2-4% of Total PV.
+  * INC buys +2.8-5.5% raw INC PV for 0.7-2.9% of Total PV.
+* **Stage-1 plans can be dominated (lexicographic polish).** A cold s2000 HSP plan certified within 1% on the score kept 95.7% of Total PV. Maximising Total PV subject to `score >= stage-1 score` (`cpo_layers.build_polish`, warm from the stage-1 plan) brought it to **98.0% at the same score**, but needed 134 s; 15 s recovered 0.2 points and 30 s 0.5 points. cfadsds HSP went from 96.8% to 97.6% (93 s). The INC plan was already non-dominated (0.5 s, no change). This is the research note's point (MULTI_OBJECTIVE_LAYERS §1): at a coarse gap, a quick second stage is needed before a frontier point is reported.
+* **Warm plans from another objective swamp the machine.** With the Total plan as the warm start, the E34 concurrent proofs start a pool for every last year the screen leaves open, while the main solve sits at the plan's own last year (L = 31-33) instead of the optimum's (L = 30). Single-seed probes on s2000 HSP warm 1%:
+  * default: >120 s;
+  * `best_first` (solve the lowest-bound last year first): 118 s;
+  * concurrent proofs off: 52 s;
+  * both: 32.5 s.
+
+  New opt-in `warm_triage` switches both when the screen finds the warm plan more than 3x the target gap from its bound. Over 2 seeds it is mixed: s2000 HSP 1% >120 → 72 s and INC 1% 33 → 24 s, but INC 0.5% 44 → 77 s, and cfadsds is unchanged. Base warm runs are unaffected (screen-certified). It stays opt-in.
+* **Anchors f = 0.99 and f = 1.0** (`warm_triage`, 1 seed; MULTI_OBJECTIVE §1 predicted the tight floor to be the slowest point):
+  * **Where the floor does not bind, f = 0.99 is the same problem as f = 0.85.** s2000 INC: 28 s cold to 1%, 37 s to 0.5%, at 99.1% of Total PV and INC +5.3%.
+  * **Where it binds, certification becomes hard.** HSP on both scenarios and cfadsds INC take 103 s to more than 120 s at 1%, and more than 120 s at 0.5%. Each holds exactly 99.0% of Total PV for HSP +0.9-1.8% or INC +1.9%.
+  * **f = 1.0 is pathological.** Nearly every run hits the 120 s cap, and cold cfadsds runs found no schedule at all: a schedule at PV ≥ PV\* is as hard to find as the best Total plan.
+  * Two cfadsds HSP f = 1.0 runs failed with "node LP ended with status Not Set". HiGHS returned neither optimal nor infeasible on a node LP twice, warm and cold. Such a node is now kept open as a MIP leaf with bound -inf (never pruned), instead of failing the solve (tested).
+* **Verdict (A1)**:
+  * Dimension scoring works as a soft tilt. INC is the dimension worth offering: +2.8-5.5% raw INC PV for 0.7-2.9% of Total PV.
+  * The 85-90% floors are irrelevant on these scenarios, because the unconstrained tilt never goes below 96%. A useful floor sits at or above f_free (0.96-0.99), and there it binds and slows certification sharply.
+  * Recommended default: **INC**, with a lexicographic polish whenever a point is reported. The floor value comes from the Stage C frontier, which sweeps f downward from 1.0 to 0.96.
+  * Time: plan on 15-50 s to 1% and 20-60 s to 0.5%, cold or warm.
+
+### E45: activity-class adherence (Stage A2)
+
+* **Layer.**
+  * Classes and cost shares come from the Costs sheet's Activity Class column.
+  * Windows: the first four 3-year NLTP windows.
+  * Target: share x funding entitlement.
+  * Shortfall-only, free within 20% of the target or the lumpiness floor.
+  * Slopes 1 : 4 : 12 beyond the free zone.
+  * Decay: half per decade, giving window weights 1 : 0.81 : 0.66 : 0.54.
+  * Price x = 0.01% (about the CPO's calibrated regional λ).
+* **Baseline:** the CPO's hard bands: ±10% of realised window spend + $25M, first 4 windows, classes with ≥ 2% share (3 of 5).
+* **Every plan is measured against the same default rows** ("worst w1 / w2" = the largest class shortfall beyond the free zone in windows 1 and 2, as % of target).
+* **Diagnostic first (MULTI_OBJECTIVE §2, Jensen / lumpiness gap).** The root LP pays 0.000-0.008% of PV in class penalty against 9-25% for the stored Total plan. The LP bound is the same as without the layer. Certifying therefore depends on the primal side finding low-penalty schedules.
+* **Lumpiness floor.** The approved floor, the most one member can put in the window, is larger than the target for most class-window cells: one mega-project can out-spend a class's whole 3-year entitlement. It switches those rows off (`-lumpwin`: the Total plan pays 0-0.3% of PV and nothing changes). The default floor is therefore the largest single-year spend of a member, capped at half the target.
+* **Result** (1 seed, 120 s cap, seconds to the certified gap; `>` = not certified):
+
+| Scenario | Variant | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | Worst w1 / w2 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | none (Total plan) | | | | | 100% | 16% / 48% |
+| s2000_P50 | **soft (default)** | 32.1 | 36.0 | 65.8 | 114.4 | 99.5-99.8% | 7-9% / 0-3% |
+| s2000_P50 | soft, window floor (approved literal) | 21.4 | 34.7 | 0.5 | 4.4 | 99.8-100% | 10-16% / 39-48% |
+| s2000_P50 | soft, mega carve-out 13 | 20.9 | 22.9 | 129 | >120 | 99.6% | 7-10% / 19-20% |
+| s2000_P50 | soft, carve-out 13 + endogenous base | 29.2 | 60.6 | >120 | >120 | 99.3-99.8% | 9-12% / 0% |
+| s2000_P50 | CPO hard ±10% | >120 | >120 | >120 | >120 | 98.7-99.1% | 0-6% / 0-6% (0 band violations) |
+| cfadsds_P50 | none (Total plan) | | | | | 100% | 48% / 31% |
+| cfadsds_P50 | **soft (default)** | 23.7 | 46.3 | 43.6 | 72.7 | 99.5-99.7% | 0-11% / 0% |
+| cfadsds_P50 | soft, window floor | 18.7 | 34.5 | 0.3 | 0.3 | 99.7-100% | 42-50% / 22-31% |
+| cfadsds_P50 | soft, carve-out 13 | 27.7 | 39.8 | 56.5 | 64.3 | 99.5-99.8% | 22-27% / 19-27% |
+| cfadsds_P50 | soft, carve-out 13 + endogenous base | 46.2 | >120 | 63.2 | 46.8 | 99.6-99.9% | 40-47% / 2-21% |
+| cfadsds_P50 | CPO hard ±10% | 25.8 | 50.8 | 36.3 | 120.1 | 98.8-98.9% | 0% / 0% (0 band violations) |
+
+* **The soft default delivers almost all of the adherence for a quarter of the hard bands' PV cost.**
+  * Cost: 0.2-0.5% of Total PV, against 1.0-1.3% for the hard bands.
+  * Adherence: window-2 shortfalls vanish, and window 1 drops to at most 11%.
+  * Speed: it certifies 1% in 24-32 s and 0.5% in 36-46 s cold. The hard bands never certify on s2000 within 120 s; on CFADS they take 26 s / 51 s.
+  * The CPO's own run of the same hard bands reported about 1% NPV and a 1,200 s time limit (ACTIVITY_CLASS_WINDOWS_FINDINGS).
+* **The carve-out is as fast but answers a different question.** With the 13 largest projects out of the targets, the remaining classes keep 19-27% shortfalls against the full-programme yardstick. On a fixed base it also charges the Total plan 27-29% of PV, because the mega-projects take the early funding. The endogenous base, which is the CPO's carve-out measurement, is slower and leaves window-1 shortfalls of 40-47% on CFADS.
+* **Warm from the Total plan is again slower than cold** (44-114 s against 24-46 s). That plan carries a 10-14% class penalty, so it is far from certified, and the concurrent proofs swamp the machine (E44). For layered solves, start cold or use `warm_triage`.
+* **Verdict.** Default class layer: **soft, 20% free, single-year lumpiness floor capped at half the target, x = 0.01%**. Keep the hard bands as the CPO-compatible baseline only. The carve-out and the endogenous base stay options.
