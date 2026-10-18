@@ -1214,3 +1214,68 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * The default-style pair certifies 0.5% three times faster.
   * The cuts tighten the LP where the Jensen gap lives: the rows themselves. Branching on the largest projects (E49) and stronger strong branching (E50) could not do that.
 * **Verdict: adopted.** Both presets now run `layer_cuts=5`. It only acts on instances with layers, so the no-layer presets and their final table are unchanged. Covered by the existing preset tests.
+
+### E54: final table for the chosen default layers (all 10 CPO scenarios)
+
+* **Setup.**
+  * Layers: `cls-x0.01+reg-pop-x0.01-at5_10-tol10` (`cpo_layers.DEFAULT_VARIANT`): class x = 0.01%, plus the population profile at years 5 and 10, ±10%, x = 0.01%.
+  * Presets as merged after E55, which run 5 rounds of shortfall MIR cuts.
+  * Warm runs start from the CPO's stored Total plan with `warm_triage`; cold runs have no plan.
+  * 1 seed, 120 s cap, load-clean. PV\* for the eight new scenarios comes from the `0.5pct` preset on their base instance (warm).
+* Shortfalls are the worst of each layer's own yardstick (class windows 1-2; population share at years 5 and 10).
+
+| Scenario | warm 1% | warm 0.5% | cold 1% | cold 0.5% | Total PV | worst class w1-w2 | worst pop y5-y10 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50high | 29.0 | 40.0 | 36.4 | 39.0 | 99.7% | 9-10% | 0-8% |
+| s2000_P50 | 29.6 | 41.8 | 20.0 | 37.9 | 99.3-99.8% | 10-11% | 0% |
+| cfadsds_P50 | 33.6 | 70.0 | 31.7 | 41.9 | 99.1% | 0% | 0-11% |
+| cfadsds_P50high | 34.8 | 57.2 | 34.0 | 61.8 | 99.0-99.2% | 0-1% | 0-9% |
+| cfadsds_P95 | >120 (1.85%) | >120 (1.84%) | 67.7 | >120 (1.24%) | 99.1% | 0-7% | 12-25% |
+| cfadsds_P95high | 94.6 | >120 (1.28%) | 79.8 | >120 (0.89%) | 99.0-99.2% | 0% | 7-19% |
+| cfads_P50 | 16.6 | 19.1 | 15.6 | 16.4 | 99.6% | 0-2% | 0-6% |
+| cfads_P95 | 28.6 | 28.9 | 19.7 | 25.1 | 99.3-99.4% | 0-7% | 0-7% |
+| s1750_P50 | >120 (1.30%) | >120 (1.03%) | 108.9 | >120 (1.19%) | 99.4-99.8% | 2-4% | 0-3% |
+| s1750_P95 | >120 (1.03%) | >120 (0.78%) | >120 (1.04%) | >120 (0.98%) | 98.9-99.5% | 0-10% | 0-12% |
+| **shifted geo. mean** (unproven at 120) | 51.0 | 63.3 | 43.9 | 58.6 | | | |
+
+* **The default layers cost 0.2-1.1% of Total PV on every scenario.**
+  * Class shortfalls go from 16-48% (the Total plan) to 0-11%.
+  * The worst population shortfall at years 5/10 goes from 55-80% to 0-12%, and 25% on the hardest case.
+* **Cold, a certified 1% within 2 minutes on 9 of 10 scenarios (16-109 s), and 0.5% on 6 of 10.**
+  * The misses are the CFADS P95 pair at 0.5% and the s1750 pair. s1750_P95 is also the outlier without layers (more than 300 s cold).
+  * Their certified gaps at 120 s are 0.8-1.9%.
+* **Warm from the stored Total plan is no faster than cold** (shifted geometric means 51 / 63 s against 44 / 59 s). That plan is far from the layered optimum, so a layered solve is effectively a cold solve.
+  * Day-to-day use: the warm start that should help is a previous *layered* plan, as in E38. That is not yet measured with layers.
+* **Against the presets without layers** (final table, cold): 1% shifted geometric mean 22.7 → 43.9 s, 0.5% 34.8 → 58.6 s. The layers roughly double the time to a certified answer.
+
+### E52: proof runs of the chosen defaults ("prove at the very end")
+
+* **Setup.**
+  * Layers: the default (class + early population profile), on s2000_P50 and cfadsds_P50.
+  * Warm start: E54's best plan.
+  * Settings: the `0.5pct` preset with `rel_gap=1e-4`, automatic strong branching, 60 leaves, 60 s slices, shortfall MIR cuts; 1,800 s cap, load-clean.
+
+| Scenario | Certified gap at 1,800 s | Improvement over the E54 plan |
+|---|---|---|
+| s2000_P50 | 0.014% | 0.13% |
+| cfadsds_P50 | 0.065% | 0.26% |
+
+* **Neither reached 0.01% in 30 minutes, but both are now certified close to the optimum.** The 1-2 minute 0.5% answers of E54 were within 0.15% (s2000) and 0.33% (CFADS) of the optimal layered schedule, as the presets promise.
+* The 1e-5 standard of the no-layer KPI is out of reach for layered models in this budget, as expected from E49-E55 (bound-limited). For decision use, the 0.5% preset answer is accurate enough. A 0.1% answer needs tens of minutes.
+
+### E57: one model iteration with the default layers (the E38 protocol)
+
+* **Setup.**
+  * Edits: k = 1, 3 or 5 random projects of the layered s2000_P50 and cfadsds_P50 instances. Spend and PV are scaled by U[0.8, 1.2] and the earliest start is delayed 1-2 years, exactly as in E38.
+  * Each edited instance is re-solved warm from the previous *layered* plan (E54's best), repaired where infeasible.
+  * Presets as merged, 1 seed, 120 s cap. `s` = certified by the screen alone after the repair.
+
+| Edited projects | s2000 1% | s2000 0.5% | cfadsds 1% | cfadsds 0.5% |
+|---|---|---|---|---|
+| 1 | 1.0s | 8.9 | 0.6s | 19.7 |
+| 3 | 6.2s | 19.9 | 27.9 | 115.1 |
+| 5 | 9.7 | 17.8 | 2.0s | 19.6 |
+
+* **A layered model iteration re-solves in seconds.** Median about 4 s to 1% (4 of 6 certified by the screen) and about 20 s to 0.5%. Cold layered solves of the same scenarios take 20-32 s and 38-42 s (E54).
+* Without layers, E38 took 1.6 s / 3.0 s. With layers the screen certifies less often, because the edited plan's penalty moves, so the tree runs more.
+* **Verdict.** In day-to-day use, keep the previous layered plan and warm-start from it. A plan made for a different objective (the Total plan) does not help (E44-E54).
