@@ -155,7 +155,13 @@ def _lp_node(model: Model, splits: list[Split]) -> Node | None:
             if f > 1e-6:
                 cand.append((f * weight, p, int(opts[j])))
     cand.sort(reverse=True)
-    return Node(model.user(obj), splits, cand[:32], len({p for _, p, _ in cand}))
+    n_frac = len({p for _, p, _ in cand})
+    pri = model.aux.get("priority")
+    if pri:  # E49: branch on the priority projects (the mega-projects) while any of them is fractional
+        first = [c for c in cand if c[1] in pri]
+        if first:
+            cand = first
+    return Node(model.user(obj), splits, cand[:32], n_frac)
 
 
 def _branch(model: Model, node: Node, sb_candidates: int = 0, pool=None,
@@ -314,10 +320,12 @@ def _lower_priority() -> None:
 
 
 def _init(best_val, best_starts, lock, stop, name, L, encoding, balance, cuts_path=None, rel_gap=1e-9, live=None,
-          steal=None, proof_options=None, low_priority=False, primal_options=None):
+          steal=None, proof_options=None, low_priority=False, primal_options=None, priority=None):
     if low_priority:
         _lower_priority()
     model = last_year_model(I.load(name), L, encoding, balance)
+    if priority:
+        model.aux["priority"] = set(priority)
     _W.update(best_val=best_val, best_starts=best_starts, lock=lock, stop=stop, model=model, cuts_path=cuts_path,
               cuts_loaded=False, rel_gap=rel_gap, live=live, steal=steal, proof_options=proof_options or {},
               primal_options=primal_options or {})
@@ -580,6 +588,13 @@ class ParallelResult:
     log: list[str]
 
 
+def mega_projects(inst, k: int) -> list[int]:
+    """E49: the k projects with the largest total spend (the lumps behind the layers' Jensen gap)."""
+    if k <= 0:
+        return []
+    return sorted(range(inst.n), key=lambda p: -int(inst.spend[p].sum()))[:k]
+
+
 def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int | None = None, encoding: str = "step",
                    balance: str = "cumulative", time_limit: float = 900.0, incumbent: np.ndarray | None = None,
                    t0: float | None = None, idle: Callable[[float], None] | None = None,
@@ -593,7 +608,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    max_racers: int = 4, proof_options: dict | None = None,
                    low_priority: bool = False, cancel=None, rc_fix: bool = False, lns_rins: bool = False,
                    primal_options: dict | None = None, lns_wait_incumbent: bool = False,
-                   lns_max_size: int = 45, root_extend: bool = False) -> ParallelResult:
+                   lns_max_size: int = 45, root_extend: bool = False, mega_first: int = 0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -641,6 +656,10 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_wait_incumbent (E39): without an incumbent, the LNS workers join the tree until the first schedule appears.
     lns_rins (E39): LNS also uses the LP-disagreement neighbourhood (see _lns_task).
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
+    mega_first (E49): the k largest projects (total spend) are branched on first wherever one is fractional: a lazy,
+        LP-pruned enumeration of their start years. Soft allocation layers leave the LP bound almost unchanged because
+        the LP spreads a mega-project's spend over several starts (the Jensen / lumpiness gap); fixing them early
+        makes node bounds pay the lumpy shortfall.
     sb_candidates (E11): strong branching over this many candidates in the ramp-up and re-split (0 = off; -1 = auto,
         16 when the root has more than 15 fractional projects, else 4). E12: the
         child LPs run on the pool whenever at least 2 workers are outside LNS; otherwise on the master.
@@ -660,6 +679,9 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_workers = min(lns_workers, max(0, workers - 1))  # E37: always keep a tree worker (a preset on a small machine)
     inst = I.load(name)
     model = last_year_model(inst, L, encoding, balance)
+    priority = mega_projects(inst, mega_first)
+    if priority:  # E49: the tree branches on the largest projects first (lazy start-year enumeration, LP-pruned)
+        model.aux["priority"] = set(priority)
     log: list[str] = []
     ctx = mp.get_context("spawn")
     lock = ctx.Lock()
@@ -694,7 +716,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
                                          str(cuts_path) if cut_rounds else None, rel_gap, live, steal,
-                                         proof_options, low_priority, primal_options))
+                                         proof_options, low_priority, primal_options, priority))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
         if quick_seconds > 0:

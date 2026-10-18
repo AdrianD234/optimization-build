@@ -190,3 +190,31 @@ def test_unsolvable_node_lp_becomes_an_open_leaf(monkeypatch):
     monkeypatch.setattr(P, "_highs", lambda *a, **k: Stuck())
     node = P._lp_node(model, [])
     assert node is not None and node.bound == -np.inf and node.frac == []
+
+
+@pytest.mark.parametrize("seed", [0, 3])
+def test_mega_first_stays_exact(tmp_path, seed):
+    """E49: branching on the largest projects first changes the tree, never the answer."""
+    raw = layered(seed)
+    path = write_instance(tmp_path, raw)
+    bf, _ = S.brute_force(I.from_dict(raw))
+    r = solver.solve(str(path), workers=2, time_limit=60, n_leaves=6, mega_first=2)
+    assert r.proven and r.objective == pytest.approx(bf, rel=1e-9, abs=1e-6)
+    r = solver.solve(str(path), workers=2, time_limit=60, preset="0.5pct", n_leaves=6, mega_first=2)
+    assert r.proven and r.objective - bf <= 5e-3 * abs(r.objective) + 1e-6 and r.dual_bound <= bf + 1e-9 * abs(bf)
+
+
+def test_mega_first_puts_priority_projects_first():
+    from capopt import parallel as P
+    inst = I.from_dict(layered(0))
+    model = last_year_model(inst, inst.T - 1, "step", "cumulative")
+    root = P._lp_node(model, [])
+    mega = P.mega_projects(inst, 2)
+    model.aux["priority"] = set(mega)
+    node = P._lp_node(model, [])
+    frac_mega = [c for c in root.frac if c[1] in mega]
+    if frac_mega:
+        assert node.frac and all(c[1] in mega for c in node.frac)
+    else:
+        assert node.frac == root.frac
+    assert node.n_frac == root.n_frac

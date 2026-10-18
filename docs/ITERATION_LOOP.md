@@ -186,12 +186,13 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 | E46 | Region: cost share vs 50/50 population blend, carve-out, endogenous base (x = 0.01%) | ✅ A3 | both bases remove most shortfall for under 1% PV; blend faster and cheaper (1% in 22-26 s); cost share uncertified on CFADS in 120 s; target basis is the user's call |
 | E47 | Blends: dim+class, class+region, all three (cost and blend bases) | ✅ B | PV costs add up; two layers certify in 18-89 s; the triple often ends at a 1-3% gap in 120 s |
 | E48 | Frontiers: INC floor, class price, regional price (chained presets) | ✅ C | class knee x = 0.01%; INC about 2 score points per PV point; a chained sweep at a 1% gap is sticky (4g rule) |
+| E49 | Mega-project first branching (lazy start enumeration, `mega_first`) on the hard CFADS cases | ✖ no gain | bound-limited: pooled best-known gap 0.62-0.85%; k = 4 gives better incumbents but a weaker reported bound; opt-in, off |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
-| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | the last three not tried; enumeration is the next lever for the hard CFADS cases |
+| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | 5-yearly checkpoints and a worst-case term not tried; enumeration tried in E49 (no gain); next: cuts on the shortfall rows |
 
 **Status of the distribution layers track (2026-10-19): Stages A-C done.** The recommended defaults are in EXPERIMENTS.md "Distribution layers: recommended defaults". Open:
 - the regional target basis (cost share or blend), which is the user's call;
-- mega-project start-year enumeration, for the hard CFADS cases;
+- the hard CFADS cases are bound-limited (E49): cuts on the shortfall rows are the next lever;
 - 5-yearly checkpoints and a worst-case regional term;
 - a final proof run of the chosen defaults.
