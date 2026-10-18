@@ -397,6 +397,26 @@ def summary(names: list[str]) -> None:
               f"{cont}")
 
 
+def compact(names: list[str]) -> None:
+    """One line per run: seconds (> = not certified), certified gap, PV retained, INC/HSP score, and the class and
+    regional shortfalls (worst %, first two windows / checkpoints) against the default rows."""
+    print("scenario | variant | mode | preset | s | gap | PV | score | class w1/w2 | reg cost c10/c20 | reg blend c10/c20")
+    for (sc, v, pr, mode, _), r in _records(names):
+        if not r.get("starts"):
+            print(f"{sc} | {v} | {mode} | {pr} | >{r['time_limit']:.0f} | - | no schedule")
+            continue
+        m = metrics(sc, r["starts"])
+        d = [x for x in D5 if f"dim-{x}" in v]
+        sc_txt = f"{d[0]} {m['score_' + d[0]] * 100 - 100:+.1f}%" if d else ""
+        gap = (r["objective"] - r["dual_bound"]) / abs(r["objective"])
+
+        def two(k):
+            return f"{m[k][0]['worst_pct']:.0f}/{m[k][1]['worst_pct']:.0f}"
+        t = f"{r['seconds']:.1f}" if r["proven"] else f">{r['time_limit']:.0f}"
+        print(f"{sc} | {v} | {mode} | {pr} | {t} | {gap * 100:.2f}% | {m['pv_retained'] * 100:.2f}% | {sc_txt} | "
+              f"{two('class')} | {two('region_cost')} | {two('region_blend')}")
+
+
 def main() -> int:
     cmd = sys.argv[1]
     if cmd == "pvstar":
@@ -410,6 +430,8 @@ def main() -> int:
         spec(sys.argv[2])
     elif cmd == "frontier":
         frontier_spec(sys.argv[2])
+    elif cmd == "compact":
+        compact([a for a in sys.argv[2:] if not a.startswith("--")])
     elif cmd == "summary":
         summary([a for a in sys.argv[2:] if not a.startswith("--")])
     elif cmd == "metrics":

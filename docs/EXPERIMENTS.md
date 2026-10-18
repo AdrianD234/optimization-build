@@ -947,3 +947,32 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * Regional layer: **soft, capped targets, 20% free, single-year lumpiness floor, x = 0.01%, checkpoints 10 / 20 / 30 at 4 : 2 : 1**.
   * Target basis: **the user's choice**. The blend is faster and cheaper on these two scenarios; cost share is the CPO's earlier basis and is hard to certify on CFADS.
   * Not tried (MULTI_OBJECTIVE §3): 5-yearly checkpoints, a worst-case term, and enumerating the start years of the mega-projects. The last is the remedy for the CFADS cost-share case.
+
+### E47: blends (Stage B)
+
+* **Setup.** The default layers from E44-E46 (INC tilt at f = 0.85, soft class at x = 0.01%, regional cost share at x = 0.01%), combined in pairs and all three; 1 seed, 120 s cap.
+  * With INC in the mix, the class and regional prices are a share of the INC score's PV\* (the PV the objective maximises), so x keeps its meaning.
+  * Shortfalls are measured against the default rows: class worst w1 / w2; region worst at c10 / c20.
+  * `cpo_layers.py compact` prints one line per run.
+
+| Scenario | Blend | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | INC score | Class w1/w2 | Region (cost) c10/c20 |
+|---|---|---|---|---|---|---|---|---|---|
+| s2000_P50 | INC + class | 28.6 | 86.7 | 44.0 | 83.6 | 98.7-98.9% | +10.0-10.5% | 15-16% / 2-10% | 66-71% / 16-33% |
+| s2000_P50 | class + region | 18.0 | 32.4 | >120 | >120 | 99.0% | | 0% / 0-5% | 9% / 10-11% |
+| s2000_P50 | all three | 70.4 | >120 (0.78%) | >120 | >120 (0.50%) | 96.7-97.2% | +8.3-8.7% | 9% / 7-10% | 19% / 6-21% |
+| cfadsds_P50 | INC + class | 13.9 | 15.3 | 17.2 | 19.5 | 97.1% | +7.7% | 1% / 0% | 49% / 67% |
+| cfadsds_P50 | class + region | 89.4 | >120 (0.84%) | >120 (2.2%) | >120 (1.5%) | 97.8-98.8% | | 0-1% / 0% | 2-22% / 8-20% |
+| cfadsds_P50 | all three | >120 (2.0%) | >120 (2.6%) | >120 (2.0%) | >120 (2.8%) | 95.4-96.4% | +6.2-7.0% | 0% / 0% | 24-27% / 11-43% |
+
+(Gaps in brackets are the certified gaps at the 120 s cap.)
+
+* **The layers compose, and each costs about its own share of PV.**
+  * Class + region together keep 98.7-99.0% of Total PV. That is about the sum of the two alone (0.2-0.5% and 0.5-1.6%).
+  * Adding the INC tilt takes another 2-2.5 points. INC's score gain shrinks a little (+6-9% against +8-11% alone), because the tilt and the allocation targets pull on the same early funding.
+* **Certification slows with each layer.**
+  * s2000: class + region certifies 1% in 18 s cold, about as fast as either layer alone. All three need 70 s.
+  * CFADS: anything that includes the regional cost-share layer is hard. Class + region needs 89 s for 1%; all three end at a 2% gap after 120 s.
+  * This is E46's Jensen gap: the LP pays almost none of the regional penalty that the integer schedules must pay. The research note's remedy is to enumerate the mega-projects' start years (MULTI_OBJECTIVE §2).
+* **INC + class on CFADS is the cheapest blend to certify** (14-20 s): class adherence is complete, and INC +7.7%.
+* **Warm starts from the Total plan are slower than cold across the blends**, as for each layer alone.
+* **Verdict.** Blends work and keep their PV cost additive. For a fast certified answer, use one or two layers. The triple certifies within about a minute on the flat envelope, but not on CFADS within 2 minutes; the CFADS triple with the regional blend basis is E47b.
