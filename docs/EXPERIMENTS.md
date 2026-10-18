@@ -1051,10 +1051,14 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 |---|---|---|---|---|
 | Dimension scoring | `w_p x PV_D` (CPO notebook weights), Total PV ≥ f · PV\*, carry kept; lexicographic polish before reporting | INC; pick f from the frontier (0.97-0.985 certify fast) | 1-3% for +2-3% raw INC (+5-8% score) | 15-30 s / 20-60 s |
 | Activity class | soft, shortfall-only, fixed entitlement base, 20% free or the single-year lumpiness floor (capped at half the target), slopes 1:4:12, windows 1:0.81:0.66:0.54 | x = 0.01% | 0.2-0.5% | 24-32 s / 36-46 s |
-| Region | as class; cumulative checkpoints 10/20/30 at 4:2:1, targets capped at attainable spend, National excluded | x = 0.01% (blend) / 0.03% (cost share); **basis is the user's choice** | 0.1-0.8% (blend), 0.5-1.6% (cost) | 22-26 s / 22-72 s (blend); cost share uncertified on CFADS |
+| Region | **the user's early-horizon population profile (E56)**: 100% population share at cumulative checkpoints 5 and 10 only, ±10% free, capped at attainable spend, National excluded. Variants: blend or cost share at 10/20/30 (or 5-yearly + worst-case, E51) | x = 0.01% | 0.1-0.6% | 16-34 s / 23-54 s |
 | Two layers | class + region | as above | 0.3-1.3% | 18-89 s / 32-79 s |
 | All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
 
+* **Chosen default (updated after E56): class at x = 0.01% plus the population profile at years 5 and 10** (`cpo_layers.DEFAULT_VARIANT`). Two intermediate choices were superseded:
+  * the blend basis (cheaper and faster than cost share; cost-share targets are circular, since the pipeline sets its own target, MULTI_OBJECTIVE §3);
+  * then the user's early-horizon population profile, which beats both in the first decade.
+  * Blend and cost share remain variants (`reg-blend-x0.01`, `reg-cost-x0.03`).
 * **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
 * **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap).
   * Easy cases certify once the primal side finds a low-penalty schedule.
@@ -1094,3 +1098,119 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
     * c-MIR / cover cuts on the most violated shortfall rows, with the dominant member's spend as the divisor (MULTI_OBJECTIVE §2);
     * a proof-length run of one hard case, to learn how much of the 0.6-0.85% is really primal.
   * Meanwhile the practical answer for CFADS with a regional cost-share layer is a 1-1.5% certified gap in 2 minutes, or the blend basis (E46-E47b).
+
+### E50: dual-side levers on the hard layered CFADS cases
+
+* **Setup.**
+  * Cases (cfadsds_P50, cold, 120 s cap): E49 found the two cost-share cases bound-limited, plus the chosen default pair (class + regional blend).
+  * Seeds: 2 at 0.5% and 1 at 1%.
+  * Arms are levers that already exist:
+    * the presets as they are (4-candidate strong branching, 24 leaves);
+    * `sb_candidates=16`, the E22-E23 CFADS bound-stall rule;
+    * automatic strong branching with 60 leaves;
+    * `cut_rounds=5`, root GUB-cover cuts.
+
+| Case | Preset | base | sb16 | sbauto + 60 leaves | root cuts |
+|---|---|---|---|---|---|
+| region (cost) | 0.5% | >120 (1.41%) / >120 (1.42%) | **46.3 / 48.6** | 66.8 / 92.8 | 106.2 / >120 (0.95%) |
+| region (cost) | 1% | >120 (1.59%) | **45.0** | 45.7 | 89.8 |
+| class + region (cost) | 0.5% | >120 (0.94%) / >120 (0.98%) | >120 (1.02%) / >120 (1.96%) | >120 (1.06%) / >120 (2.00%) | >120 (1.87%) / failed |
+| class + region (cost) | 1% | **59.9** | >120 (1.08%) | >120 (1.98%) | 63.3 |
+| class + region (blend), the default | 0.5% | **31.2** / >120 (0.52%) | >120 (0.57%) / >120 (0.62%) | 41.4 / >120 (0.68%) | 120.1 / >120 (0.55%) |
+| class + region (blend), the default | 1% | **24.9** | 48.8 | 41.9 | 34.4 |
+
+* **Stronger strong branching certifies the regional cost-share layer alone at 0.5%, in 46-49 s, where the presets fail in 120 s.**
+  * Its bound is 0.06-0.1 points tighter than base, and its incumbents are better too.
+  * This is the same lever that fixed the CFADS bound stall without layers (E22-E23).
+* **On class + region and on the default blend pair it costs time.** At 1%: 60 s → >120 s and 25 s → 49 s. The wider strong branching delays the leaves that find schedules.
+  * Class + region (cost share) stays uncertified at 0.5% under every arm. Its bounds improve (0.74-0.77 points below the best known, against 0.94-0.97), but the pooled best-known gap is still 0.74%.
+* **Root cuts change little. One cuts run failed with an IndexError** that did not reproduce. The campaign runner now records a failed run's traceback, so a recurrence can be diagnosed. `cut_rounds` with layers stays unsupported in practice (opt-in, off).
+* **Verdict (and E53).** The presets stay as they are. The default pair certifies fastest with them (25 s to 1%, 31 s or a 0.52% gap at 0.5%). For a run with the regional **cost-share** layer alone, pass `sb_candidates=16`. No automatic rule: the effect reverses as soon as the class layer joins.
+
+### E51: 5-yearly regional checkpoints and a worst-case term (MULTI_OBJECTIVE §3)
+
+* **What changed** (tested: model = evaluator with worst-case rows in the mix):
+  * **Worst-case primitive** (`layers.worst_case_block`, the `worst` section): a continuous M ≥ every row's normalised shortfall beyond its free zone, (target - free - spend) / N. M costs x% of PV\* per 1% of N, so the worst-off region counts on top of the sum.
+  * **New options:**
+    * `-cp5`: cumulative checkpoints at years 5, 10, ..., 30, with the same half-per-decade decay.
+    * `-wcX`: the worst-case term at price X.
+  * **New metric:** the worst blend shortfall at any 5-yearly checkpoint, which detects bunching between the 10/20/30 checkpoints.
+* **Result** (regional blend basis x = 0.01%, cold, 1 seed, 120 s cap; the baseline row is E46):
+
+| Scenario | Variant | 1% | 0.5% | Total PV | Blend c10/c20 | Worst at any 5-yearly checkpoint |
+|---|---|---|---|---|---|---|
+| s2000_P50 | 10/20/30 (E46) | 21.5 | 22.5 | 99.7-99.8% | 3-8% / 0-10% | 27-30% |
+| s2000_P50 | + worst-case | 21.5 | 31.4 | 99.6-99.7% | 1% / 0-11% | 33-50% |
+| s2000_P50 | 5-yearly | 28.7 | 46.3 | 99.5-99.7% | 1-8% / 0-4% | 1-8% |
+| s2000_P50 | 5-yearly + worst-case | 22.1 | 69.7 | 99.6-99.7% | 0-5% / 0% | 0-5% |
+| cfadsds_P50 | 10/20/30 (E46) | 25.8 | 71.8 | 99.3-99.4% | 10-18% / 5-8% | 35% |
+| cfadsds_P50 | + worst-case | 21.4 | 32.4 | 99.2% | 2-6% / 4-8% | 35-46% |
+| cfadsds_P50 | 5-yearly | 28.1 | >120 (0.78%) | 99.1% | 10% / 14% | 20% |
+| cfadsds_P50 | 5-yearly + worst-case | 28.2 | >120 (0.76%) | 99.0-99.1% | 10% / 3-7% | 15-17% |
+
+* **Three checkpoints invite bunching, as the research note predicted.** Plans optimised for years 10/20/30 leave a region 27-35% short at an in-between 5-yearly checkpoint (year 5, 15 or 25). 5-yearly checkpoints bring that worst case down to 1-20%, for 0.1-0.3 more points of PV.
+* **The worst-case term tightens the worst region at the checkpoints it covers** (c10 shortfall 1-6% instead of 3-18%), at the same speed. On its own it does nothing between checkpoints.
+* **Time:** all variants certify 1% in 21-29 s. At 0.5%, 5-yearly checkpoints are slower (46-70 s on s2000) and miss 120 s on CFADS, with a 0.76-0.78% gap.
+* **Verdict.** For the regional layer, **5-yearly checkpoints plus the worst-case term (`-cp5-wc0.01`)** give the most even regional delivery for at most 0.3 points of PV. Certify those runs at 1%. The 10/20/30 form stays the faster 0.5% option. The final choice of regional default waits for E56 (the user's population-only, early-horizon profile).
+
+### E56: the user's early-horizon population profile (regional)
+
+* **The user's design.** The target is 100% population share, with no cost blend, applied **only at early checkpoints**. Over the full horizon a population target cannot hold, because a region runs out of selected projects. Early on there is room to pull projects forward. The rest of the design:
+  * soft, within ±X% (free band), shortfall penalised;
+  * each region's target capped at what its pipeline can spend by then (the existing safeguard).
+* **Implementation.**
+  * `reg-pop` basis: population share of the governed regions (National excluded), x the pool fraction.
+  * `-atY[_Y2]`: cumulative checkpoints at those years only, half-per-decade decay.
+  * New yardstick in the metrics: the worst region's population-share shortfall at years 5 and 10 (20% free).
+* **Variants:** checkpoints {year 5, year 10, years 5 and 10} x free band {±10%, ±20%}, x = 0.01%; cold, 1 seed, 120 s cap. The stored Total plan's worst population shortfall is 63% / 80% at years 5 / 10 (s2000) and 55% / 67% (cfadsds).
+
+| Scenario | Variant | 1% | 0.5% | Total PV | Worst population shortfall y5 / y10 |
+|---|---|---|---|---|---|
+| s2000_P50 | year 5 only, ±10% | 14.4 | 17.3 | 100.0% | 6% / 49-50% |
+| s2000_P50 | year 10 only, ±10% | 22.1 | 55.6 | 99.9-100.0% | 0-33% / 0-1% |
+| s2000_P50 | **years 5 + 10, ±10%** | 34.4 | 53.7 | 99.6-99.9% | **0% / 0%** |
+| s2000_P50 | years 5 + 10, ±20% | 22.4 | 33.9 | 99.6-99.7% | 0% / 0% |
+| s2000_P50 | blend at 10/20/30 (E46) | 21.5 | 22.5 | 99.7-99.8% | 26-44% / 7-25% |
+| cfadsds_P50 | year 5 only, ±10% | 16.6 | 27.0 | 99.6% | 0-13% / 47-52% |
+| cfadsds_P50 | year 10 only, ±10% | 21.4 | 50.0 | 99.3% | 43-49% / 0-9% |
+| cfadsds_P50 | **years 5 + 10, ±10%** | 16.0 | 23.2 | 99.4% | **0-3% / 2-4%** |
+| cfadsds_P50 | years 5 + 10, ±20% | 22.5 | >120 (0.57%) | 99.3-99.5% | 2-7% / 0-20% |
+| cfadsds_P50 | blend at 10/20/30 (E46) | 25.8 | 71.8 | 99.3-99.4% | 49% / 40-51% |
+
+* **Both early checkpoints are needed.** Either one alone leaves the other year 25-52% short.
+* **With both, population fairness in the first decade is near-exact** (worst region 0-4% short), for 0.1-0.6% of Total PV. It certifies 1% in 16-34 s and 0.5% in 23-54 s: as fast as the blend, and faster than cost share.
+* **±10% is the better band.** It is equally cheap and certified 0.5% on CFADS where ±20% did not.
+* **Verdict: the regional default becomes the user's profile.** Population share, cumulative checkpoints at years 5 and 10, ±10% free, capped at attainable spend, x = 0.01% (`cpo_layers.DEFAULT_VARIANT = cls-x0.01+reg-pop-x0.01-at5_10-tol10`). It settles the target-basis question without a 50/50 compromise. Blend and cost share stay variants. After year 10 the layer sets no regional target, by design. E54 measures the default pair on all 10 scenarios.
+
+### E55: MIR cuts on the shortfall rows (adopted in both presets)
+
+* **Hypothesis.** E49-E50 showed the hard layered cases are bound-limited, and the root LP pays almost none of the lumpy shortfall (the Jensen gap). Each shortfall row is a covering knapsack over start choices plus continuous slack, so MIR cuts should lift the bound.
+* **The cut.** For a fixed-target shortfall row `sum_{p,j} a_pj [p starts at j] + sum_k u_k >= D` (a ≥ 0, u ≥ 0), any divisor d > 0 with f = frac(D/d) > 0 gives the valid inequality
+
+  `sum (floor(a/d) + min(1, frac(a/d)/f)) [p starts at j] + sum_k u_k / (d f) >= ceil(D/d)`
+
+  This is the MIR of the covering knapsack; the ≤-form coefficients are invalid here. A first diagnostic with them pushed the LP above a feasible schedule's value.
+* **What changed** (opt-in `layer_cuts=rounds`):
+  * `layers.shortfall_mir` separates the most violated cut per row. Divisors tried: the members' largest window spends and D/k. The cut is written in either encoding: pulse directly, or step by differencing, with constants moved to the right-hand side.
+  * `layers.mir_loop` runs the root rounds.
+  * The rows reach the workers through the existing root-cut file.
+  * Tests:
+    * every cut holds at every sampled feasible schedule, in both encodings;
+    * solves with cuts match brute force (proof mode and preset).
+* **Offline diagnostic.** On the cfadsds class + region (cost) model, 3 rounds and 32 cuts lift the root LP by 0.17% of |objective|.
+* **Result** (cfadsds_P50, cold, 2 seeds at 0.5% and 1 seed at 1%, 120 s cap):
+
+| Case | Preset | base | 5 rounds of shortfall MIR cuts |
+|---|---|---|---|
+| region (cost) | 0.5% | >120 (0.57%) / >120 (1.03%) | 120.1 / **67.1** |
+| region (cost) | 1% | >120 (1.51%) | **46.7** |
+| class + region (cost) | 0.5% | >120 (1.11%) / >120 (1.32%) | **71.2** / >120 (0.83%) |
+| class + region (cost) | 1% | 59.4 | **40.5** |
+| class + region (blend) | 0.5% | 101.3 / 107.6 | **32.1 / 36.7** |
+| class + region (blend) | 1% | 29.2 | **21.6** |
+
+* **Every cell improves or stays the same.**
+  * Each run's bound gets up to 0.25 points closer to the best known: class + region (cost) 0.48-0.53% below the best known, against 0.69-0.76% without cuts.
+  * The default-style pair certifies 0.5% three times faster.
+  * The cuts tighten the LP where the Jensen gap lives: the rows themselves. Branching on the largest projects (E49) and stronger strong branching (E50) could not do that.
+* **Verdict: adopted.** Both presets now run `layer_cuts=5`. It only acts on instances with layers, so the no-layer presets and their final table are unchanged. Covered by the existing preset tests.

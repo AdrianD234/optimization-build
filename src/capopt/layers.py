@@ -43,10 +43,11 @@ class Layers:
     bands: list[dict] = field(default_factory=list)  # g, a, b, share, tol, floor, label
     pv_floor: list[np.ndarray] | None = None
     pv_min: float = 0.0
+    worst: list[dict] = field(default_factory=list)  # cost, rows [g, a, b, lo, norm], label
 
     @property
     def empty(self) -> bool:
-        return not self.short and not self.bands and self.pv_floor is None
+        return not self.short and not self.bands and self.pv_floor is None and not self.worst
 
 
 def parse(raw: dict, n: int, T: int) -> Layers | None:
@@ -81,6 +82,12 @@ def parse(raw: dict, n: int, T: int) -> Layers | None:
         a, b = int(r["years"][0]), min(int(r["years"][1]), T - 1)
         lay.bands.append({"g": gid(r["members"]), "a": a, "b": b, "share": float(r["share"]), "tol": float(r["tol"]),
                           "floor": float(r.get("floor", 0.0)), "label": r.get("label", "")})
+    for blk in raw.get("worst", []):
+        rows = [{"g": gid(r["members"]), "a": int(r["years"][0]), "b": min(int(r["years"][1]), T - 1),
+                 "lo": float(r["lo"]), "norm": float(r["norm"])} for r in blk["rows"]]
+        if float(blk["cost"]) < 0:
+            raise ValueError("worst-case cost must be non-negative")
+        lay.worst.append({"cost": float(blk["cost"]), "rows": rows, "label": blk.get("label", "")})
     if raw.get("pv_floor"):
         lay.pv_floor = [np.asarray(v, dtype=np.int64) for v in raw["pv_floor"]["pv"]]
         lay.pv_min = float(raw["pv_floor"]["min"])
@@ -156,6 +163,11 @@ def score(inst, starts: np.ndarray, spend_all: np.ndarray, detail: bool = False)
         pen += c
         if detail:
             rows.append({"kind": "shortfall", "label": r["label"], "spend": sp, "lo": lo, "deficit": d, "cost": c})
+    for blk in lay.worst:
+        m = max([0.0] + [(r["lo"] - span(gs[r["g"]], r["a"], r["b"])) / r["norm"] for r in blk["rows"]])
+        pen += blk["cost"] * m
+        if detail:
+            rows.append({"kind": "worst", "label": blk["label"], "max_norm_shortfall": m, "cost": blk["cost"] * m})
     out["penalty"] = pen
     if detail:
         out["rows"] = rows
@@ -183,6 +195,15 @@ class ModelRows:
             hi_row = b.new_row(-INF, r["floor"])    # spend_S - (1 + tol) s spend_all <= floor
             self.band_rows.append((lo_row, hi_row, r, set(int(m) for m in self.lay.groups[r["g"]])))
         self.pv_row = b.new_row(self.lay.pv_min * PV_ROW_SCALE, INF) if self.lay.pv_floor is not None else None
+        self.worst_rows: list[tuple[int, list[tuple[int, dict]]]] = []  # (M column, [(row, r)])
+        for k, blk in enumerate(self.lay.worst):  # spend_S / norm + M >= lo / norm for every row; M >= 0 costs `cost`
+            m = b.var(blk["cost"], 0.0, INF, name=f"worst[{blk['label'] or k}]")
+            rs = []
+            for r in blk["rows"]:
+                row = b.new_row(r["lo"] / r["norm"], INF)
+                b.add(row, m, 1.0)
+                rs.append((row, r))
+            self.worst_rows.append((m, rs))
 
     def entries(self, p: int, j_allowed: int, s: int, e: dict[int, float]) -> None:
         """Add option (project p, allowed index j_allowed, start s) to the row map e."""
@@ -204,6 +225,13 @@ class ModelRows:
             v = float(self.lay.pv_floor[p][j_allowed]) * PV_ROW_SCALE
             if v:
                 e[self.pv_row] = v
+        groups = self.lay.group_of[p]
+        for _, rs in self.worst_rows:
+            for row, r in rs:
+                if r["g"] in groups:
+                    v = window_spend(cs, s, r["a"], r["b"])
+                    if v:
+                        e[row] = e.get(row, 0.0) + v / r["norm"]
 
     def fill(self, x: np.ndarray, starts: np.ndarray) -> None:
         gs = np.cumsum(group_spend(self.inst, self.lay, starts), axis=1)
@@ -219,6 +247,9 @@ class ModelRows:
                 take = min(left, w)
                 x[col] = take
                 left -= take
+        for m, rs in self.worst_rows:
+            x[m] = max([0.0] + [(r["lo"] - float(gs[r["g"]][r["b"]] - (gs[r["g"]][r["a"] - 1] if r["a"] > 0 else 0.0)))
+                                / r["norm"] for _, r in rs])
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -319,6 +350,15 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
     return rows
 
 
+def worst_case_block(rows: list[dict], price_pct: float, pv_star_obj: float, label: str = "worst") -> dict:
+    """A worst-case term over allocation rows (MULTI_OBJECTIVE §3: so small subsets count): M >= every row's
+    normalised shortfall beyond its free zone, (target - free - spend) / N, and M is charged so that a worst
+    shortfall of 1% of N costs `price_pct` % of `pv_star_obj`. Endogenous-base rows are skipped (fixed targets only)."""
+    return {"label": label, "cost": price_pct / 100.0 * pv_star_obj / 0.01,
+            "rows": [{"members": r["members"], "years": r["years"], "lo": r["target"] - r["free"], "norm": r["norm"]}
+                     for r in rows if "ref_members" not in r]}
+
+
 def hard_bands(groups: dict[str, list[int]], shares: dict[str, float], spans: list[tuple[int, int]],
                tol: float = 0.10, floor: float = 2_500.0, min_share: float = 0.02, prefix: str = "") -> list[dict]:
     """The CPO's hard activity-class bands: share of realised span spend within +-tol, plus an absolute floor."""
@@ -353,3 +393,105 @@ def report(inst, starts) -> dict[str, Any]:
     starts = np.asarray(starts, dtype=np.int64)
     spend, _ = spend_profile(inst, starts)
     return score(inst, starts, spend, detail=True)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# E55: MIR cuts on the shortfall rows (the dual side of the Jensen / lumpiness gap, MULTI_OBJECTIVE_LAYERS §2)
+# --------------------------------------------------------------------------------------------------------------------
+
+def _pulse_values(model, x: np.ndarray) -> list[np.ndarray]:
+    """Per project, the value of 'starts at option j' from a model vector (pulse columns, or step differences)."""
+    out = []
+    for cols in model.start_cols:
+        v = np.asarray(x[cols], dtype=float)
+        if model.encoding == "pulse":
+            out.append(v)
+        else:  # z_j = started by option j for j < K-1, z_{K-1} = 1
+            out.append(np.diff(np.concatenate(([0.0], v, [1.0]))))
+    return out
+
+
+def _to_model_row(model, terms: dict[int, dict[int, float]], ucols: list[int], ucoef: float,
+                  rhs: float) -> tuple[float, float, list[int], list[float]]:
+    """sum_p sum_j c_pj [p starts at option j] + ucoef sum(u) >= rhs, in the model's own columns."""
+    coef: dict[int, float] = {}
+    for p, cj in terms.items():
+        cols, K = model.start_cols[p], len(model.options[p])
+        c = np.array([cj.get(j, 0.0) for j in range(K)])
+        if model.encoding == "pulse":
+            for j in range(K):
+                if c[j]:
+                    coef[cols[j]] = coef.get(cols[j], 0.0) + float(c[j])
+        else:  # sum_j c_j (z_j - z_{j-1}) = sum_{j<K-1} (c_j - c_{j+1}) z_j + c_{K-1}
+            for j in range(K - 1):
+                d = float(c[j] - c[j + 1])
+                if d:
+                    coef[cols[j]] = coef.get(cols[j], 0.0) + d
+            rhs -= float(c[K - 1])
+    for u in ucols:
+        coef[u] = coef.get(u, 0.0) + ucoef
+    return float(rhs), np.inf, list(coef), list(coef.values())
+
+
+def shortfall_mir(model, x: np.ndarray, max_cuts: int = 100, min_violation: float = 1e-4) -> list[tuple]:
+    """Most violated MIR cut per fixed-target shortfall row at the LP point x. For a row
+    sum_{p,j} a_pj [p starts at j] + sum_k u_k >= D (a >= 0, u >= 0) and a divisor d > 0, with f = frac(D/d) > 0,
+        sum (floor(a/d) + min(1, frac(a/d)/f)) [p starts at j] + sum_k u_k / (d f) >= ceil(D/d)
+    is valid (MIR of the covering knapsack). Divisors tried: the largest member spends in the row and D/k."""
+    lay = model.inst.layers
+    if lay is None or not lay.short:
+        return []
+    names = model.builder.names
+    xp = _pulse_values(model, x)
+    cs = [np.cumsum(sp.astype(float)) for sp in model.inst.spend]
+    cuts = []
+    for r in lay.short:
+        D = r["lo"]
+        if r["gref"] >= 0 or D <= 0:
+            continue
+        ucols = [i for i, nm in enumerate(names) if nm.startswith(f"short[{r['label']}]")]
+        uval = float(sum(x[c] for c in ucols))
+        aj = {int(p): [window_spend(cs[p], int(s), r["a"], r["b"]) for s in model.options[p]]
+              for p in lay.groups[r["g"]]}
+        cands = sorted({a for v in aj.values() for a in v if a > 0}, reverse=True)[:12]
+        cands += [D / k for k in (1, 2, 3, 4, 6, 8)]
+        best = None
+        for d in cands:
+            q = D / d
+            f = q - np.floor(q)
+            if f < 1e-6 or f > 1 - 1e-6:
+                continue
+            g = {p: [np.floor(a / d) + min(1.0, (a / d - np.floor(a / d)) / f) for a in v] for p, v in aj.items()}
+            lhs = sum(float(np.dot(g[p], xp[p])) for p in g) + uval / (d * f)
+            viol = float(np.ceil(q)) - lhs
+            if viol > min_violation and (best is None or viol > best[0]):
+                best = (viol, g, 1.0 / (d * f), float(np.ceil(q)))
+        if best:
+            viol, g, ucoef, rhs = best
+            terms = {p: {j: c for j, c in enumerate(v) if c} for p, v in g.items()}
+            cuts.append((viol, _to_model_row(model, terms, ucols, ucoef, rhs)))
+    cuts.sort(key=lambda c: -c[0])
+    return [c for _, c in cuts[:max_cuts]]
+
+
+def mir_loop(model, rounds: int = 5) -> tuple[list[float], list[tuple]]:
+    """Root LP loop: separate shortfall MIR cuts, add them as rows, re-solve. Returns the LP bound per round and the
+    rows added (lo, hi, cols, vals) for shipping to the workers."""
+    from .solve import new_highs
+    bounds, added = [], []
+    for _ in range(rounds + 1):
+        h = new_highs(1)
+        h.setOptionValue("output_flag", False)
+        h.setOptionValue("solve_relaxation", True)
+        model.builder.to_highs(h)
+        h.run()
+        bounds.append(model.user(h.getInfo().objective_function_value))
+        if len(bounds) > rounds:
+            break
+        rows = shortfall_mir(model, np.asarray(h.getSolution().col_value))
+        if not rows:
+            break
+        for lo, hi, cols, vals in rows:
+            model.builder.row(lo, hi, cols, vals)
+        added += rows
+    return bounds, added

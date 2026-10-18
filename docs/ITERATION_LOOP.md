@@ -187,6 +187,12 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 | E47 | Blends: dim+class, class+region, all three (cost and blend bases) | ✅ B | PV costs add up; two layers certify in 18-89 s; the triple often ends at a 1-3% gap in 120 s |
 | E48 | Frontiers: INC floor, class price, regional price (chained presets) | ✅ C | class knee x = 0.01%; INC about 2 score points per PV point; a chained sweep at a 1% gap is sticky (4g rule) |
 | E49 | Mega-project first branching (lazy start enumeration, `mega_first`) on the hard CFADS cases | ✖ no gain | bound-limited: pooled best-known gap 0.62-0.85%; k = 4 gives better incumbents but a weaker reported bound; opt-in, off |
+| E50 | Dual-side levers that already exist (sb16, auto sb + 60 leaves, root cover cuts) on the hard CFADS layered cases | ◐ | sb16 certifies the regional cost-share layer alone at 0.5% (46-49 s, base >120), but slows the class + region pairs; no preset change |
+| E51 | 5-yearly regional checkpoints, worst-case term | ✅ option | 10/20/30 checkpoints let a region fall 27-35% short in between; 5-yearly fixes it for ≤ 0.3 points of PV |
+| E55 | MIR cuts on the shortfall rows | ✅ adopted (presets `layer_cuts=5`) | every hard case faster; the default-style pair 0.5% 101-108 s → 32-37 s |
+| E56 | The user's early-horizon population profile (years 5 and 10, ±10%) | ✅ regional default | near-exact population fairness in the first decade for 0.1-0.6% PV; 1% in 16-34 s |
+| E54 | Chosen defaults on all 10 scenarios | running | |
+| E52 | Final proof run of the chosen defaults | queued | |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
 | — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | 5-yearly checkpoints and a worst-case term not tried; enumeration tried in E49 (no gain); next: cuts on the shortfall rows |

@@ -608,7 +608,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
                    max_racers: int = 4, proof_options: dict | None = None,
                    low_priority: bool = False, cancel=None, rc_fix: bool = False, lns_rins: bool = False,
                    primal_options: dict | None = None, lns_wait_incumbent: bool = False,
-                   lns_max_size: int = 45, root_extend: bool = False, mega_first: int = 0) -> ParallelResult:
+                   lns_max_size: int = 45, root_extend: bool = False, mega_first: int = 0,
+                   layer_cuts: int = 0) -> ParallelResult:
     """Solve the fixed-last-year model for one L to proven optimality with split-and-solve.
 
     Leaves wait in a best-first queue. With `slice_seconds`, a leaf that is still open after its time slice comes back
@@ -656,6 +657,7 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     lns_wait_incumbent (E39): without an incumbent, the LNS workers join the tree until the first schedule appears.
     lns_rins (E39): LNS also uses the LP-disagreement neighbourhood (see _lns_task).
     lns_alns (E20): adaptive neighbourhood selection in LNS (see _lns_task). The log totals tries/wins/seconds per kind.
+    layer_cuts (E55): rounds of MIR cuts on the shortfall rows at the root (layers.mir_loop), shipped to the workers.
     mega_first (E49): the k largest projects (total spend) are branched on first wherever one is fractional: a lazy,
         LP-pruned enumeration of their start years. Soft allocation layers leave the LP bound almost unchanged because
         the LP spreads a mega-project's spend over several starts (the Jensen / lumpiness gap); fixing them early
@@ -715,7 +717,8 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
     cuts_path.unlink()  # workers read it only after the master has written it
     pool = ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init,
                                initargs=(best_val, best_starts, lock, stop, name, L, encoding, balance,
-                                         str(cuts_path) if cut_rounds else None, rel_gap, live, steal,
+                                         str(cuts_path) if (cut_rounds or layer_cuts) else None, rel_gap, live,
+                                         steal,
                                          proof_options, low_priority, primal_options, priority))
     try:
         warm = [pool.submit(_noop) for _ in range(workers)]  # start spawning now; the master works meanwhile
@@ -752,11 +755,21 @@ def solve_parallel(name: str, L: int, workers: int | None = None, n_leaves: int 
         # E39: with no incumbent yet, LNS has nothing to work on: give its workers to the tree until one exists
         lns_pending = lns_wait_incumbent and not lns_after_rampup and best_val.value == np.inf and lns_workers > 0
         lns = [] if (lns_after_rampup or lns_pending) else start_lns()
+        shipped: list = []
         if cut_rounds:
             from .cuts import cut_row, root_loop
             bounds, cuts = root_loop(model, cut_rounds)
-            cuts_path.write_text(json.dumps([cut_row(model, c) for c in cuts]), encoding="utf-8")
+            shipped += [cut_row(model, c) for c in cuts]
             log.append(f"root cuts: {len(cuts)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> {bounds[-1]:.6e}")
+        if layer_cuts and inst.layers is not None:  # E55: MIR cuts on the shortfall rows
+            from .layers import mir_loop
+            bounds, rows = mir_loop(model, layer_cuts)
+            shipped += rows
+            log.append(f"shortfall MIR cuts: {len(rows)} in {len(bounds) - 1} rounds, LP {bounds[0]:.6e} -> "
+                       f"{bounds[-1]:.6e}")
+        if cut_rounds or layer_cuts:  # infinite bounds as +-1e300 (JSON has no inf); HiGHS reads them as infinite
+            cuts_path.write_text(json.dumps([[max(lo, -1e300), min(hi, 1e300), cols, vals]
+                                             for lo, hi, cols, vals in shipped]), encoding="utf-8")
         free = workers if (lns_after_rampup or lns_pending) else workers - lns_workers
         sb_pool = pool if free >= 2 else None  # never queue behind LNS tasks that run for minutes
         if sb_candidates < 0:  # E23 auto: 16 candidates when the root LP smears many projects (CFADS), else 4

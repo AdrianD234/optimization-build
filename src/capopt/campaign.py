@@ -439,7 +439,9 @@ def run(spec: dict, cdir: Path, heartbeat_s: float = HEARTBEAT_S, out_dir: Path 
                 try:
                     outcome = runner(item, float(item.get("time_limit", spec["time_limit"])), out)  # per-run override
                 except Exception as exc:  # noqa: BLE001 - record and continue with the next run
-                    outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                    import traceback
+                    outcome = {"status": "failed", "error": f"{type(exc).__name__}: {exc}",
+                               "traceback": traceback.format_exc()[-4000:]}  # E50: a bare message was undiagnosable
                 # rerun a contended run, and one whose worker pool died for lack of memory (another app's peak)
                 starved = outcome.get("status") == "failed" and any(
                     k in outcome.get("error", "") for k in ("BrokenProcessPool", "MemoryError", "paging file"))
