@@ -537,14 +537,17 @@ OVERRIDE_CASES = {  # case -> (instance stem or extraction, forced start year of
     "cfadsds_P50_2029": ("cfadsds_P50", 2029),  # the CPO notebook's own forced-start rule on CFADS-DS
     "cfads_P50_2028": ("cfads_P50", 2028),
     "s2000_P50_2026": ("s2000_P50", 2026),      # the forced case of the CPO's own deck
-    "s1500_P95_2026": ("s1500_P95", 2026),      # the stored pair closest to the user's earlier figures
+    "s1500_P95_2026": ("s1500_P95", 2026),      # the stored pairs closest to the user's earlier figures (PV here,
+    "s1500_P95high_2026": ("s1500_P95high", 2026),  # BCR there)
 }
+EXTRACT = {"s1500_P95": "objective bestP95Real_LIN40_base_s1500_pm0_TOT.pkl",
+           "s1500_P95high": "objective bestP95Real_LIN40_high_s1500_pm0_TOT.pkl"}
 
 
 def _override_inst(stem: str) -> tuple[Path, Path]:
-    if stem == "s1500_P95":
-        p = _extract("objective bestP95Real_LIN40_base_s1500_pm0_TOT.pkl", "CPO233_s1500_P95")
-        return p, INST / "CPO233_s1500_P95_cpo_reference.json"
+    if stem in EXTRACT:
+        p = _extract(EXTRACT[stem], f"CPO233_{stem}")
+        return p, INST / f"CPO233_{stem}_cpo_reference.json"
     return CPO / "instances" / f"CPO233_{stem}.json", cpo_plan(stem)
 
 
@@ -605,6 +608,46 @@ def cmd_override() -> None:
     write_csv(out / "large_project_cash_by_year.csv", cash_rows)
     write_csv(out / "large_project_gantt.csv", gantt_rows)
     print(json.dumps(rows, indent=1))
+
+
+def cmd_cpo_pairs() -> None:
+    """E62 cross-check: the CPO's own stored result pairs (objective best vs the forced start of P217), read from its
+    pickles (read-only): benefit PV, cost PV (MBCM discounting), BCR and P217's start, for every funding scenario."""
+    import pickle
+    src = Path(os.environ["CAPOPT_CPO_PRESETS"])
+    rows = []
+    for f in sorted(src.glob("*_TOT.pkl")):
+        stem = f.name[:-8]
+        if "Orchestrator" in stem:
+            continue
+        o = pickle.loads(f.read_bytes())
+        sp = o["spend"]
+        yrs = [c for c in sp.columns if isinstance(c, (int, np.integer))]
+        tot = sp.loc[[i for i in sp.index if str(i).lower().startswith("project")], yrs].sum(axis=0).to_numpy(float)
+        cost = float((tot / disc(len(yrs))).sum()) * 1e6
+        sched = o["schedule"].set_index("Project")
+        kind = "forced" if "objective best" not in stem else "objective best"
+        key = stem.replace("CFADS less debt service - ", "cfadsds ").replace("CFADS ", "cfads ")
+        for w in ("Waitemata start", "objective best"):
+            key = key.replace(w, "")
+        rows.append({"scenario_key": " ".join(key.split()), "plan": kind, "pv_bn": o["pv_total"] / 1e9,
+                     "cost_pv_bn": cost / 1e9, "bcr": o["pv_total"] / cost,
+                     "p217_start": int(sched.loc["project 217", "StartFY"]), "cpo_gap": o.get("gap")})
+    by = {}
+    for r in rows:
+        by.setdefault(r["scenario_key"], {})[r["plan"]] = r
+    out = []
+    for k, d in sorted(by.items()):
+        if "forced" in d and "objective best" in d:
+            b, f = d["objective best"], d["forced"]
+            out.append({"scenario_key": k, "pv_best_bn": b["pv_bn"], "pv_forced_bn": f["pv_bn"],
+                        "pv_forgone_bn": b["pv_bn"] - f["pv_bn"],
+                        "pv_forgone_pct_of_best": 100 * (b["pv_bn"] - f["pv_bn"]) / b["pv_bn"],
+                        "best_more_valuable_pct_of_forced": 100 * (b["pv_bn"] - f["pv_bn"]) / f["pv_bn"],
+                        "bcr_best": b["bcr"], "bcr_forced": f["bcr"], "p217_start_best": b["p217_start"],
+                        "p217_start_forced": f["p217_start"]})
+    write_csv(REPORT / "override" / "cpo_stored_pairs.csv", out)
+    print(json.dumps(out, indent=1))
 
 
 def cmd_small_moves() -> None:
@@ -834,7 +877,7 @@ def cmd_loop() -> None:
 
 
 COMMANDS = {"windows": cmd_windows, "sequencing": cmd_sequencing, "shapes": cmd_shapes, "growth": cmd_growth,
-            "override": cmd_override, "small_moves": cmd_small_moves, "warm_envelopes": cmd_warm_envelopes,
+            "override": cmd_override, "cpo_pairs": cmd_cpo_pairs, "small_moves": cmd_small_moves, "warm_envelopes": cmd_warm_envelopes,
             "time_to_gap": cmd_time_to_gap, "loop": cmd_loop, "existing": cmd_existing}
 
 if __name__ == "__main__":
