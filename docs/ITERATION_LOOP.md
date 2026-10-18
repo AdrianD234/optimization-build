@@ -196,10 +196,9 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 | E57 | Layered model iteration (edit 1-5 projects, warm from the previous layered plan) | ✅ | median about 4 s to 1%, about 20 s to 0.5% |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
-| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | 5-yearly checkpoints and a worst-case term not tried; enumeration tried in E49 (no gain); next: cuts on the shortfall rows |
+| — | Endogenous base (✅ E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints and worst-case term (✅ E51), mega-project start enumeration (✖ E49), cuts on the shortfall rows (✅ E55, adopted) (MULTI_OBJECTIVE §2-3) | ✅ | |
 
-**Status of the distribution layers track (2026-10-19): done (E44-E57).** Stages A-C, the user's population profile as the regional default, and shortfall MIR cuts in the presets. The recommended defaults are in EXPERIMENTS.md "Distribution layers: recommended defaults". Open:
-- the regional target basis (cost share or blend), which is the user's call;
-- the hard CFADS cases are bound-limited (E49): cuts on the shortfall rows are the next lever;
-- 5-yearly checkpoints and a worst-case regional term;
-- a final proof run of the chosen defaults.
+**Status of the distribution layers track (2026-10-19): done (E44-E57).** Stages A-C, the user's population profile as the regional default (E56), and shortfall MIR cuts in the presets (E55). The recommended defaults and the E54 final table are in EXPERIMENTS.md. Open, for a later track:
+- certified 0.5% within 2 minutes on s1750_P50/P95 and cfadsds_P95/P95high: these are bound-limited, and s1750_P95 is hard even without layers;
+- a lexicographic polish step for dimension-scoring frontier points (E44: about 100 s a point for HSP);
+- pool-based λ sweeps and diverse near-optimal schedules (MULTI_OBJECTIVE §4).
