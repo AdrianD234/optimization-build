@@ -202,3 +202,11 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 - certified 0.5% within 2 minutes on s1750_P50/P95 and cfadsds_P95/P95high: these are bound-limited, and s1750_P95 is hard even without layers;
 - a lexicographic polish step for dimension-scoring frontier points (E44: about 100 s a point for HSP);
 - pool-based λ sweeps and diverse near-optimal schedules (MULTI_OBJECTIVE §4).
+
+## Practitioner capabilities track (from 2026-10-19)
+
+The user's practitioner's report presents capopt as a rapid optioneering tool. Each capability is built, tested and demonstrated on the CPO data with report-ready data (`benchmarks/experiments/practitioner.py`; data under the gitignored `private/report_data/`). One PR per capability.
+
+| # | Capability | Status | Where |
+|---|---|---|---|
+| E58 | Forced start windows (`timing.with_windows`, `pin`) | ✅ | windows in the optimum cost 0 and certify in 0.2 s; one large low-BCR project forced early costs 0.7-1.6% (CFADS) / 2.9-5.3% (CFADS-DS) |
