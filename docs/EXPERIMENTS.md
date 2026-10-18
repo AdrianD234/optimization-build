@@ -1062,3 +1062,32 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * lexicographic polish inside frontier sweeps (it costs about 100 s a point for HSP);
   * class × window LNS;
   * a 1e-5 proof of the chosen defaults (the user's "prove at the very end").
+
+### E49: branch on the mega-projects first (MULTI_OBJECTIVE §2, the Jensen / lumpiness gap)
+
+* **Hypothesis.** The soft layers leave the LP bound almost unchanged, because the LP spreads a mega-project's spend over several start years. Enumerating the start years of the k largest projects should make node bounds pay the lumpy shortfall and certify the hard CFADS cases (E46-E47).
+* **What changed** (opt-in `mega_first=k`, tested for exactness against brute force with layers):
+  * The LP tree branches on the k largest projects (total spend) while any of them is fractional. This is a lazy, LP-pruned, best-first form of the start-year enumeration.
+  * It applies to every node LP: the ramp-up, strong branching in the workers, and re-splits.
+  * A separate outer loop over all 7^k start-year cells (±2 years plus the two tails) would need 343 LPs per last year at k = 3.
+* **Result** (cfadsds_P50, cold, 3 seeds, 120 s cap; seconds to the certified gap, or the gap left at 120 s):
+
+| Case | k = 0 (off) | k = 2 | k = 4 |
+|---|---|---|---|
+| region (cost), 1% | 47 / >120 (1.15%) / >120 (1.55%) | 74 / >120 (1.12%) / >120 (2.16%) | 32 / 53 / >120 (1.15%) |
+| region (cost), 0.5% | 0.81% / 1.62% / 1.62% | 1.13% / 1.22% / 1.41% | 0.85% / 0.93% / 1.06% |
+| class + region, 1% | 117 / 73 / >120 (1.21%) | 62 / >120 (1.19%) / >120 (2.19%) | 1.13% / 1.17% / 1.23% |
+| class + region, 0.5% | 0.88% / 1.09% / 1.73% | 1.03% / 1.06% / 1.14% | 1.10% / 1.12% / 1.36% |
+
+* **Diagnosis: these cases are bound-limited.**
+  * Pooling the best incumbent and the best bound over all 18 runs of a case still leaves a gap of 0.62% (region) and 0.85% (class + region). No arm can certify 0.5% within 2 minutes on this data.
+  * 1% succeeds only when the run's incumbent lands within about 0.3% of the best known.
+* **Mega-first trades bound for primal.**
+  * At k = 4, every incumbent is within 0.4% of the best known (0.00-0.39%). At k = 0, incumbents drift up to 1%.
+  * The reported bound is 0.2 points weaker (0.83-0.86% below the best known, against 0.62-0.65%): the 24-leaf ramp-up spends its splits on the mega-projects, and the gap is not carried by them.
+  * The Jensen gap comes from the many medium-sized lumpy projects, not from the 2-4 largest.
+* **Verdict.** No gain in time to a certified gap. `mega_first` stays opt-in and off.
+  * Next levers are on the dual side:
+    * c-MIR / cover cuts on the most violated shortfall rows, with the dominant member's spend as the divisor (MULTI_OBJECTIVE §2);
+    * a proof-length run of one hard case, to learn how much of the 0.6-0.85% is really primal.
+  * Meanwhile the practical answer for CFADS with a regional cost-share layer is a 1-1.5% certified gap in 2 minutes, or the blend basis (E46-E47b).
