@@ -861,3 +861,13 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * both: 32.5 s.
 
   New opt-in `warm_triage` switches both when the screen finds the warm plan more than 3x the target gap from its bound. Over 2 seeds it is mixed: s2000 HSP 1% >120 → 72 s and INC 1% 33 → 24 s, but INC 0.5% 44 → 77 s, and cfadsds is unchanged. Base warm runs are unaffected (screen-certified). It stays opt-in.
+* **Anchors f = 0.99 and f = 1.0** (`warm_triage`, 1 seed; MULTI_OBJECTIVE §1 predicted the tight floor to be the slowest point):
+  * **Where the floor does not bind, f = 0.99 is the same problem as f = 0.85.** s2000 INC: 28 s cold to 1%, 37 s to 0.5%, at 99.1% of Total PV and INC +5.3%.
+  * **Where it binds, certification becomes hard.** HSP on both scenarios and cfadsds INC take 103 s to more than 120 s at 1%, and more than 120 s at 0.5%. Each holds exactly 99.0% of Total PV for HSP +0.9-1.8% or INC +1.9%.
+  * **f = 1.0 is pathological.** Nearly every run hits the 120 s cap, and cold cfadsds runs found no schedule at all: a schedule at PV ≥ PV\* is as hard to find as the best Total plan.
+  * Two cfadsds HSP f = 1.0 runs failed with "node LP ended with status Not Set". HiGHS returned neither optimal nor infeasible on a node LP twice, warm and cold. Such a node is now kept open as a MIP leaf with bound -inf (never pruned), instead of failing the solve (tested).
+* **Verdict (A1)**:
+  * Dimension scoring works as a soft tilt. INC is the dimension worth offering: +2.8-5.5% raw INC PV for 0.7-2.9% of Total PV.
+  * The 85-90% floors are irrelevant on these scenarios, because the unconstrained tilt never goes below 96%. A useful floor sits at or above f_free (0.96-0.99), and there it binds and slows certification sharply.
+  * Recommended default: **INC at f = 0.97** (it binds just under f_free, so PV stays at or above 97%), with a lexicographic polish when the point is reported.
+  * Time: plan on 15-50 s to 1% and 20-60 s to 0.5%, cold or warm.
