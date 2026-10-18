@@ -264,7 +264,7 @@ def funding_base(raw: dict, spans: list[tuple[int, int]]) -> list[float]:
 
 def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, float],
                     spans: list[tuple[int, int]], weights: list[float], price_pct: float, pv_star_obj: float,
-                    tol: float = 0.10, lumpiness: str | None = "year", lump_cap: float = 0.5,
+                    tol: float = 0.20, lumpiness: str | None = "year", lump_cap: float = 0.5,
                     slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
                     breaks: tuple[float, ...] = (0.10, 0.20), norm_floor: float = 2_500.0, min_share: float = 0.0,
                     prefix: str = "", cap_attainable: bool = True, endogenous: bool = False) -> list[dict]:

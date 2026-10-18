@@ -180,11 +180,18 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 | # | Item | Status | Where |
 |---|---|---|---|
 | E44 | Dimension scoring (ε-constraint, CPO notebook weights), INC and HSP x f ∈ {0.85, 0.90}; anchors f ∈ {0.99, 1.0} | ✅ A1 | f = 0.85 / 0.90 never bind (f_free 0.96-0.99); 15-50 s to 1%; a binding floor (f ≥ 0.99) is slow and f = 1 pathological; INC worth offering, HSP a poor trade |
-| E44 | Lexicographic polish (MULTI_OBJECTIVE §1) | ◐ probe | recovers up to 2.3 points of Total PV at the same score, but about 100 s |
+| E44 | Lexicographic polish (MULTI_OBJECTIVE §1) | ◐ probe (builder in cpo_layers) | recovers up to 2.3 points of Total PV at the same score, but about 100 s |
 | E44 | `best_first` / `warm_triage` for warm plans from another objective | ◐ opt-in | mixed over 2 seeds |
 | E45 | Activity class: soft default vs window floor, mega carve-out, carve-out + endogenous base, and the CPO's hard ±10% bands | ✅ A2 | soft default: 0.2-0.5% PV, w2 shortfall 0, 1% in 24-32 s cold; hard bands 1.0-1.3% PV, uncertified on s2000 in 120 s |
-| E46 | Region: cost share vs 50/50 population blend, carve-out, endogenous base (x = 0.01%) | running | |
-| E47 | Blends: dim+class, class+region, all three | queued | |
+| E46 | Region: cost share vs 50/50 population blend, carve-out, endogenous base (x = 0.01%) | ✅ A3 | both bases remove most shortfall for under 1% PV; blend faster and cheaper (1% in 22-26 s); cost share uncertified on CFADS in 120 s; target basis is the user's call |
+| E47 | Blends: dim+class, class+region, all three (cost and blend bases) | ✅ B | PV costs add up; two layers certify in 18-89 s; the triple often ends at a 1-3% gap in 120 s |
+| E48 | Frontiers: INC floor, class price, regional price (chained presets) | ✅ C | class knee x = 0.01%; INC about 2 score points per PV point; a chained sweep at a 1% gap is sticky (4g rule) |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
-| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | the last three not tried |
+| — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | the last three not tried; enumeration is the next lever for the hard CFADS cases |
+
+**Status of the distribution layers track (2026-10-19): Stages A-C done.** The recommended defaults are in EXPERIMENTS.md "Distribution layers: recommended defaults". Open:
+- the regional target basis (cost share or blend), which is the user's call;
+- mega-project start-year enumeration, for the hard CFADS cases;
+- 5-yearly checkpoints and a worst-case regional term;
+- a final proof run of the chosen defaults.

@@ -376,7 +376,7 @@ def summary(names: list[str]) -> None:
     cells: dict[tuple, list[dict]] = {}
     for (sc, v, pr, mode, _), rec in _records(names):
         cells.setdefault((sc, v, mode, pr), []).append(rec)
-    print(f"{'scenario':12s} {'variant':26s} {'mode':4s} {'preset':6s} {'n':>2s} {'med s':>7s} {'range':>13s} "
+    print(f"{'scenario':12s} {'variant':44s} {'mode':4s} {'preset':6s} {'n':>2s} {'med s':>7s} {'range':>13s} "
           f"{'PV ret':>7s} {'dimPV / score':>23s} {'cls w1/w2 %':>12s} {'bandv':>5s} {'reg cost c1/c2 %':>17s} "
           f"{'reg blend c1/c2 %':>17s} cont")
     for (sc, v, mode, pr), recs in sorted(cells.items()):
@@ -390,11 +390,31 @@ def summary(names: list[str]) -> None:
                f"sc {med([x[f'score_{dims[0]}'] for x in m]) * 100 - 100:+.2f}%") if dims else ""
         def wp(key, i):
             return med([x[key][i]["worst_pct"] for x in m])
-        print(f"{sc:12s} {v:26s} {mode:4s} {pr:6s} {len(ts):2d} {'>' if bad * 2 >= len(ts) else ' '}{med(ts):6.1f} "
+        print(f"{sc:12s} {v:44s} {mode:4s} {pr:6s} {len(ts):2d} {'>' if bad * 2 >= len(ts) else ' '}{med(ts):6.1f} "
               f"{min(ts):6.1f}-{max(ts):6.1f}{'*' if bad else ' '} {med([x['pv_retained'] for x in m]) * 100:6.2f}% "
               f"{dim:>23s} {wp('class', 0):5.1f}/{wp('class', 1):5.1f} {med([x['class_band_violations'] for x in m]):5.0f} "
               f"{wp('region_cost', 0):8.1f}/{wp('region_cost', 1):7.1f} {wp('region_blend', 0):8.1f}/{wp('region_blend', 1):7.1f} "
               f"{cont}")
+
+
+def compact(names: list[str]) -> None:
+    """One line per run: seconds (> = not certified), certified gap, PV retained, INC/HSP score, and the class and
+    regional shortfalls (worst %, first two windows / checkpoints) against the default rows."""
+    print("scenario | variant | mode | preset | s | gap | PV | score | class w1/w2 | reg cost c10/c20 | reg blend c10/c20")
+    for (sc, v, pr, mode, _), r in _records(names):
+        if not r.get("starts"):
+            print(f"{sc} | {v} | {mode} | {pr} | >{r['time_limit']:.0f} | - | no schedule")
+            continue
+        m = metrics(sc, r["starts"])
+        d = [x for x in D5 if f"dim-{x}" in v]
+        sc_txt = f"{d[0]} {m['score_' + d[0]] * 100 - 100:+.1f}%" if d else ""
+        gap = (r["objective"] - r["dual_bound"]) / abs(r["objective"])
+
+        def two(k):
+            return f"{m[k][0]['worst_pct']:.0f}/{m[k][1]['worst_pct']:.0f}"
+        t = f"{r['seconds']:.1f}" if r["proven"] else f">{r['time_limit']:.0f}"
+        print(f"{sc} | {v} | {mode} | {pr} | {t} | {gap * 100:.2f}% | {m['pv_retained'] * 100:.2f}% | {sc_txt} | "
+              f"{two('class')} | {two('region_cost')} | {two('region_blend')}")
 
 
 def main() -> int:
@@ -410,6 +430,8 @@ def main() -> int:
         spec(sys.argv[2])
     elif cmd == "frontier":
         frontier_spec(sys.argv[2])
+    elif cmd == "compact":
+        compact([a for a in sys.argv[2:] if not a.startswith("--")])
     elif cmd == "summary":
         summary([a for a in sys.argv[2:] if not a.startswith("--")])
     elif cmd == "metrics":

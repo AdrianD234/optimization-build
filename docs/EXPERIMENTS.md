@@ -911,3 +911,154 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **The carve-out is as fast but answers a different question.** With the 13 largest projects out of the targets, the remaining classes keep 19-27% shortfalls against the full-programme yardstick. On a fixed base it also charges the Total plan 27-29% of PV, because the mega-projects take the early funding. The endogenous base, which is the CPO's carve-out measurement, is slower and leaves window-1 shortfalls of 40-47% on CFADS.
 * **Warm from the Total plan is again slower than cold** (44-114 s against 24-46 s). That plan carries a 10-14% class penalty, so it is far from certified, and the concurrent proofs swamp the machine (E44). For layered solves, start cold or use `warm_triage`.
 * **Verdict.** Default class layer: **soft, 20% free, single-year lumpiness floor capped at half the target, x = 0.01%**. Keep the hard bands as the CPO-compatible baseline only. The carve-out and the endogenous base stay options.
+
+### E46: regional fairness (Stage A3)
+
+* **Layer.**
+  * Spans: cumulative checkpoints at years 10 / 20 / 30, weights 4 : 2 : 1.
+  * Target: share x the funding entitlement, capped at what the region's own pipeline can spend by the checkpoint. The National project is excluded.
+  * Shortfall-only, free within 20% or the single-year lumpiness floor, slopes 1 : 4 : 12, x = 0.01%.
+* **Target basis** (the user's policy choice, so both are carried):
+  * **cost share**: each region's share of programme cost;
+  * **blend**: 50/50 population share (approximate Stats NZ 2024, from the CPO's per-capita work) and cost share.
+* **Variants:** a top-13 mega-project carve-out, and the endogenous base (share of realised spend).
+* **Two design findings before any run:**
+  * **Uncapped population targets are unattainable.** Canterbury's blend share is 7.7% against 2.6% of programme cost. Without the cap the stored Total plan paid 79-84% of PV in penalty that no schedule could avoid. That shifts the objective and blurs its relative gap. With targets capped at what each region's pipeline can spend, it pays 29-41%.
+  * **The root LP pays 0.04-0.09% of PV in regional penalty, against 10-17% for the Total plan.** This is the same Jensen / lumpiness gap as the class layer (MULTI_OBJECTIVE §3).
+* **Result** (1 seed, 120 s cap; shortfall = the worst region beyond its free zone at checkpoints 10 / 20, % of target; the Total plan has 49 / 44% (s2000) and 49 / 42% (cfadsds) on cost share, 72 / 60% and 67 / 70% on the blend):
+
+| Scenario | Variant | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | Own-basis shortfall c10 / c20 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | cost share | 28.9 | 101.1 | >120 | >120 | 99.1-99.5% | 5-14% / 1-13% |
+| s2000_P50 | blend | 21.5 | 22.5 | >120 | 127 | 99.7-99.9% | 3-8% / 0-12% |
+| s2000_P50 | cost share, carve-out 13 | 15.7 | 21.4 | 101 | 101 | 99.8-100% | 29-45% / 8-13% |
+| s2000_P50 | cost share, endogenous base | 23.3 | 66.5 | >120 | >120 | 99.2-99.8% | 6-21% / 8-14% |
+| cfadsds_P50 | cost share | >120 | >120 | >120 | >120 | 98.4-99.2% | 2-27% / 10-18% |
+| cfadsds_P50 | blend | 25.8 | 71.8 | 64.9 | 71.7 | 99.2-99.4% | 10-18% / 3-8% |
+| cfadsds_P50 | cost share, carve-out 13 | 28.1 | 24.8 | 73.4 | 79.2 | 99.3-99.7% | 47% / 51-69% |
+| cfadsds_P50 | cost share, endogenous base | >120 | >120 | >120 | >120 | 98.8-99.0% | 23-29% / 14-20% |
+
+* **Both target bases remove most of the regional shortfall for under 1% of Total PV.**
+  * **Blend:** the cheaper and faster of the two here (0.1-0.8% PV, 1% certified in 22-26 s cold). Capped at attainable spend, it mostly pulls small regions' projects earlier, and it asks less of the mega-project regions than cost share does.
+  * **Cost share:** pushes against the mega-project regions (Northland, Auckland). On CFADS, where early funding is thin, it does not certify within 120 s at either gap: the integer schedule pays more penalty than the LP bound sees, which is the Jensen gap.
+* **The carve-out is fast but leaves the large regions' first-checkpoint shortfall in place** under the full-programme yardstick. The endogenous base is slower and no better.
+* **Warm starts from the Total plan are slow again.** That plan carries a 10-17% penalty, so start layered solves cold or with `warm_triage` (E44/E45).
+* **Verdict.**
+  * Regional layer: **soft, capped targets, 20% free, single-year lumpiness floor, x = 0.01%, checkpoints 10 / 20 / 30 at 4 : 2 : 1**.
+  * Target basis: **the user's choice**. The blend is faster and cheaper on these two scenarios; cost share is the CPO's earlier basis and is hard to certify on CFADS.
+  * Not tried (MULTI_OBJECTIVE §3): 5-yearly checkpoints, a worst-case term, and enumerating the start years of the mega-projects. The last is the remedy for the CFADS cost-share case.
+
+### E47: blends (Stage B)
+
+* **Setup.** The default layers from E44-E46 (INC tilt at f = 0.85, soft class at x = 0.01%, regional cost share at x = 0.01%), combined in pairs and all three; 1 seed, 120 s cap.
+  * With INC in the mix, the class and regional prices are a share of the INC score's PV\* (the PV the objective maximises), so x keeps its meaning.
+  * Shortfalls are measured against the default rows: class worst w1 / w2; region worst at c10 / c20.
+  * `cpo_layers.py compact` prints one line per run.
+
+| Scenario | Blend | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | INC score | Class w1/w2 | Region (cost) c10/c20 |
+|---|---|---|---|---|---|---|---|---|---|
+| s2000_P50 | INC + class | 28.6 | 86.7 | 44.0 | 83.6 | 98.7-98.9% | +10.0-10.5% | 15-16% / 2-10% | 66-71% / 16-33% |
+| s2000_P50 | class + region | 18.0 | 32.4 | >120 | >120 | 99.0% | | 0% / 0-5% | 9% / 10-11% |
+| s2000_P50 | all three | 70.4 | >120 (0.78%) | >120 | >120 (0.50%) | 96.7-97.2% | +8.3-8.7% | 9% / 7-10% | 19% / 6-21% |
+| cfadsds_P50 | INC + class | 13.9 | 15.3 | 17.2 | 19.5 | 97.1% | +7.7% | 1% / 0% | 49% / 67% |
+| cfadsds_P50 | class + region | 89.4 | >120 (0.84%) | >120 (2.2%) | >120 (1.5%) | 97.8-98.8% | | 0-1% / 0% | 2-22% / 8-20% |
+| cfadsds_P50 | all three | >120 (2.0%) | >120 (2.6%) | >120 (2.0%) | >120 (2.8%) | 95.4-96.4% | +6.2-7.0% | 0% / 0% | 24-27% / 11-43% |
+
+(Gaps in brackets are the certified gaps at the 120 s cap.)
+
+* **The layers compose, and each costs about its own share of PV.**
+  * Class + region together keep 98.7-99.0% of Total PV. That is about the sum of the two alone (0.2-0.5% and 0.5-1.6%).
+  * Adding the INC tilt takes another 2-2.5 points. INC's score gain shrinks a little (+6-9% against +8-11% alone), because the tilt and the allocation targets pull on the same early funding.
+* **Certification slows with each layer.**
+  * s2000: class + region certifies 1% in 18 s cold, about as fast as either layer alone. All three need 70 s.
+  * CFADS: anything that includes the regional cost-share layer is hard. Class + region needs 89 s for 1%; all three end at a 2% gap after 120 s.
+  * This is E46's Jensen gap: the LP pays almost none of the regional penalty that the integer schedules must pay. The research note's remedy is to enumerate the mega-projects' start years (MULTI_OBJECTIVE §2).
+* **INC + class on CFADS is the cheapest blend to certify** (14-20 s): class adherence is complete, and INC +7.7%.
+* **Warm starts from the Total plan are slower than cold across the blends**, as for each layer alone.
+* **Verdict.** Blends work and keep their PV cost additive. For a fast certified answer, use one or two layers. The triple certifies within about a minute on the flat envelope, but not on CFADS within 2 minutes; the CFADS triple with the regional blend basis is E47b.
+
+### E48: knob calibration and trade-off frontiers (Stage C)
+
+* **Method** (MULTI_OBJECTIVE §4): a chained sweep with `cpo_layers.py frontier`.
+  * Points run in the direction that loosens the problem: a lower PV floor, or a higher price.
+  * Each point warm-starts from the previous point's plan, so reuse is free.
+  * Every point is a `1pct` solve on cfadsds_P50 with a 180 s cap.
+* **Dimension frontier** (INC, floor f swept down from 0.995; the first point warm-starts from the CPO plan):
+
+| f | Seconds to certified 1% | Total PV | INC score | Raw INC PV |
+|---|---|---|---|---|
+| 0.995 | >180 (1.20%) | 99.50% | +2.8% | +1.3% |
+| 0.99 | 177.4 | 99.00% | +4.7% | +2.0% |
+| 0.985 | 31.0 | 98.58% | +5.4% | +2.2% |
+| 0.98 | 65.8 | 98.01% | +6.2% | +2.4% |
+| 0.975 | >180 (1.06%) | 97.80% | +6.7% | +2.6% |
+| 0.97 (≈ f_free) | 15.6 | 97.17% | +7.8% | +2.8% |
+
+  * Across the whole curve, about 2 points of INC score (0.6 points of raw INC PV) per point of Total PV, steepest near f = 1: the first 0.5 point of PV buys +2.8% score and +1.3% raw INC.
+  * Neighbouring points are 0.5 points of PV apart, while each certified gap is up to 1% of the score (MULTI_OBJECTIVE §5). By the 4g rule only the overall slope is signal; the local rates are not.
+  * A binding floor costs time: 31 s to more than 180 s, against 16 s unconstrained.
+* **Class price frontier** (x swept up; all five points certified 1% in 14-24 s):
+
+| x (% of PV\* per 1% shortfall in window 1) | Total PV | Class w1 / w2 |
+|---|---|---|
+| none (Total plan) | 100% | 48% / 31% |
+| 0.001 | 99.87% | 45% / 23% |
+| 0.003 | 99.61% | 21% / 8% |
+| **0.01** | 99.59% | 0% / 3% |
+| 0.03 | 99.52% | 1% / 0% |
+| 0.1 | 99.52% | 1% / 0% |
+
+  * The knee is at **x = 0.01%**: full class adherence for about 0.4% of PV. A higher price buys nothing more; the layer saturates.
+  * The PV differences between the last three points (0.07%) are well inside the 1% gap. The adherence change is the signal.
+  * The whole sweep took under 2 minutes, which is what the presets make possible.
+
+**E47b: the same blends with the regional blend basis** (50/50 population and cost share; cold only, 1 seed):
+
+| Scenario | Blend | Cold 1% | Cold 0.5% | Total PV | INC score | Class w1/w2 | Region (blend) c10/c20 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | class + region (blend) | 27.1 | 66.9 | 99.6-99.7% | | 11-14% / 0% | 0-5% / 0-11% |
+| s2000_P50 | all three (blend) | >120 (2.7%) | >120 (2.6%) | 95.4-95.5% | +7.4% | 14-16% / 0% | 19% / 5-6% |
+| cfadsds_P50 | class + region (blend) | 28.1 | 78.5 | 98.9-99.0% | | 0-1% / 0% | 2-10% / 0-8% |
+| cfadsds_P50 | all three (blend) | 62.2 | >120 (0.64%) | 96.3-96.5% | +6.9-7.0% | 0-3% / 0% | 12-13% / 10-13% |
+
+* **On CFADS, class + region certifies with the blend basis in 28 s, against 89 s with cost share.** The blend asks less of the mega-project regions.
+* **The triple stays fragile and depends on the scenario and the basis.**
+  * Blend: certifies on CFADS, but not on s2000.
+  * Cost share: the other way round.
+* **Recommendation:** two layers for routine certified runs. For the triple, the 0.5% preset is a stretch within 2 minutes. Either accept a 1-3% certified gap there, or add the mega-project start-year enumeration (not built).
+* **Regional price frontiers** (s2000_P50, both bases, x swept up, chained, `1pct`; the first point starts cold):
+
+| x | Cost basis: s | Total PV | Cost shortfall c10/c20 | Blend basis: s | Total PV | Blend shortfall c10/c20 |
+|---|---|---|---|---|---|---|
+| none (Total plan) | | 100% | 49% / 44% | | 100% | 72% / 60% |
+| 0.001 | 22.1 | 99.64% | 36% / 11% | 17.2 | 99.61% | 8% / 10% |
+| 0.003 | 16.7 | 99.90% | 21% / 11% | 1.0 | 99.61% | 8% / 10% |
+| 0.01 | 5.3 | 99.90% | 21% / 11% | 2.5 | 99.61% | 8% / 10% |
+| 0.03 | 98.3 | 99.15% | 6% / 0% | 10.3 | 99.57% | 7% / 10% |
+| 0.1 | 8.8 | 99.15% | 6% / 0% | 108.0 | 99.74% | 0% / 0% |
+
+  * **A chained sweep at a coarse gap is sticky.** Once a plan is close to adherent, its penalty at the next price is below the 1% gap, so the preset certifies the previous plan as it is. The x = 0.003 and 0.01 points (and 0.03 → 0.1 on cost) return the previous point's schedule in 1-9 s. This is the 4g rule of MULTI_OBJECTIVE §5 in practice: the frontier is only as fine as its gap. A finer regional frontier needs the 0.5% or 0.1% target, or independent cold points.
+  * **Blend:** even x = 0.001 removes most of the shortfall (72 → 8%) for 0.4% of PV. Full adherence needs x = 0.1.
+  * **Cost share:** needs x ≈ 0.03 to bring the worst checkpoint-10 region to 6%, for 0.85% of PV.
+* **Verdict (Stage C).** Frontiers cost seconds per point with the presets: class 2 min, regional 4-5 min, dimension 13 min (its binding floors are slow).
+  * **Class knob: x = 0.01%.** This is the knee: full adherence for about 0.4% PV.
+  * **Regional knob: x = 0.01%** (the CPO-equivalent λ) for the blend basis; x = 0.03% if the basis is cost share.
+  * **Dimension: report the frontier rather than a single floor.** About 2 score points per PV point; f between 0.985 and 0.97 certifies quickly.
+
+## Distribution layers: recommended defaults (2026-10-19)
+
+| Layer | Form | Default knob | PV cost (2 scenarios) | Certified 1% / 0.5% (cold, 1 seed) |
+|---|---|---|---|---|
+| Dimension scoring | `w_p x PV_D` (CPO notebook weights), Total PV ≥ f · PV\*, carry kept; lexicographic polish before reporting | INC; pick f from the frontier (0.97-0.985 certify fast) | 1-3% for +2-3% raw INC (+5-8% score) | 15-30 s / 20-60 s |
+| Activity class | soft, shortfall-only, fixed entitlement base, 20% free or the single-year lumpiness floor (capped at half the target), slopes 1:4:12, windows 1:0.81:0.66:0.54 | x = 0.01% | 0.2-0.5% | 24-32 s / 36-46 s |
+| Region | as class; cumulative checkpoints 10/20/30 at 4:2:1, targets capped at attainable spend, National excluded | x = 0.01% (blend) / 0.03% (cost share); **basis is the user's choice** | 0.1-0.8% (blend), 0.5-1.6% (cost) | 22-26 s / 22-72 s (blend); cost share uncertified on CFADS |
+| Two layers | class + region | as above | 0.3-1.3% | 18-89 s / 32-79 s |
+| All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
+
+* **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
+* **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap), so certification depends on the primal side. The next lever, untested, is to enumerate the start years of the 2-4 largest projects as an outer loop (MULTI_OBJECTIVE §2). The hard CFADS cases (cost-share region, the triple) are where it would show.
+* **Not done:**
+  * 5-yearly checkpoints and a worst-case regional term;
+  * lexicographic polish inside frontier sweeps (it costs about 100 s a point for HSP);
+  * class × window LNS;
+  * a 1e-5 proof of the chosen defaults (the user's "prove at the very end").
