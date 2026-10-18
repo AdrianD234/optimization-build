@@ -24,7 +24,10 @@ def layered(seed: int, kinds=("short", "bands", "floor"), n: int = 6, T: int = 9
         lay["shortfall"] = (LY.allocation_rows(raw, groups, shares, [(0, 1), (2, 3)], [2.0, 1.0], 0.5, 1e4 * 50,
                                                tol=0.05, lumpiness=None, norm_floor=10.0, prefix="win:")
                             + LY.allocation_rows(raw, groups, shares, [(0, 2), (0, 4)], [2.0, 1.0], 0.2, 1e4 * 50,
-                                                 tol=0.0, lumpiness=None, norm_floor=10.0, prefix="cum:"))
+                                                 tol=0.0, lumpiness=None, norm_floor=10.0, prefix="cum:")
+                            + LY.allocation_rows(raw, groups, shares, [(1, 3)], [1.0], 0.3, 1e4 * 50,
+                                                 tol=0.0, lumpiness=None, norm_floor=10.0, prefix="endo:",
+                                                 endogenous=True))
     pv_obj = None
     if "floor" in kinds:
         tot = [p["pv_int"] for p in raw["projects"]]
@@ -58,6 +61,7 @@ def test_model_equals_evaluator_with_layers(seed, encoding, balance):
     vector satisfies every row, and at a later last year the value is not below it; the cash floor bounds both."""
     inst = I.from_dict(layered(seed))
     assert inst.layers is not None and inst.layers.short and inst.layers.bands
+    assert any(r["gref"] >= 0 for r in inst.layers.short)  # an endogenous-base row is in the mix
     rng = np.random.default_rng(seed)
     checked = charged = 0
     for _ in range(5000):

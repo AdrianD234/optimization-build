@@ -10,12 +10,15 @@
 
 Variants ("+" joins layers; "base" = no layer):
     dim-<D>-f<NN>      dimension scoring: objective PV = w_p x PV_D (CPO notebook weights), Total PV >= NN% of PV*
-    cls-x<P>           activity class, soft: first four 3-year windows, weights 8:4:2:1, free 10% or the lumpiness
+    cls-x<P>[-opts]    activity class, soft: first four 3-year windows, weights half per decade, free 20% or the lumpiness
                        floor (largest single-year spend of a member, capped at half the target), slopes 1:4:12; a 1%
                        shortfall in window 1 costs P% of PV* (of the score at the PV* plan when combined with dim-)
     clshard            the CPO baseline: hard +-10% of realised window spend + $25M, first four windows, min share 2%
-    reg-<cost|blend>-x<P>  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
+    reg-<cost|blend>-x<P>[-opts]  regional: cumulative checkpoints at years 10/20/30, weights 4:2:1, free 20% or the lumpiness
                        floor; target share = cost share, or 50/50 population and cost share (National excluded)
+
+Options (-tolNN, -lumpwin, -lumpnone, -carveN, -endo): see layer_opts. The metrics measure every plan against the same
+default rows (20% free, single-year lumpiness floor, nothing carved), whatever the variant optimised.
 
 Warm runs start from the CPO's stored (Total) plan: the realistic "turn a layer on" workflow. Real data and results
 stay under private/ (gitignored); only aggregates go into the docs.
@@ -46,7 +49,9 @@ QUIET = {"quiet": {"max_cores": 2.0, "window_s": 30.0, "max_wait_s": 1800.0, "mi
          "rerun_contended": 0}
 D5 = ["HSP", "INC", "ENV", "ECO", "RES"]
 CLASS_SPANS = [(0, 2), (3, 5), (6, 8), (9, 11)]
-CLASS_WEIGHTS = [8.0, 4.0, 2.0, 1.0]
+# the user's time decay: 4:2:1 over the 10/20/30-year checkpoints, i.e. half per decade (about 7%/yr), applied to the
+# 3-year class windows as 0.5^(3w/10)
+CLASS_WEIGHTS = [0.5 ** (3 * w / 10) for w in range(4)]
 REG_SPANS = [(0, 9), (0, 19), (0, 29)]
 REG_WEIGHTS = [4.0, 2.0, 1.0]
 NORM_FLOOR = 2_500.0  # $25M in $0.01M units
@@ -93,19 +98,56 @@ def pvstar(sc: str) -> dict:
     return data[sc]
 
 
-def groups_of(raw: dict, A: dict, key: str, drop: tuple[str, ...] = ()) -> dict[str, list[int]]:
+def mega(raw: dict, n: int) -> set[int]:
+    """The n most expensive projects (the CPO's carve_top_n)."""
+    cost = [sum(p["spend_S"]) for p in raw["projects"]]
+    return set(sorted(range(len(cost)), key=lambda i: -cost[i])[:n])
+
+
+def groups_of(raw: dict, A: dict, key: str, drop: tuple[str, ...] = (), exclude: set[int] = frozenset()
+              ) -> dict[str, list[int]]:
     g: dict[str, list[int]] = {}
     for i, p in enumerate(A["projects"]):
-        if p[key] not in drop:
+        if p[key] not in drop and i not in exclude:
             g.setdefault(p[key], []).append(i)
     return g
 
 
-def region_shares(raw: dict, A: dict, basis: str) -> tuple[dict[str, list[int]], dict[str, float]]:
-    """Regional target shares of the funding base: the governed regions' (National excluded) share of programme cost
-    (pool fraction), split by cost share or by a 50/50 blend of population and cost share."""
-    allg = groups_of(raw, A, "region")
-    cs_all = LY.cost_shares(raw, allg)
+def shares_of_total(raw: dict, groups: dict[str, list[int]]) -> dict[str, float]:
+    """Each group's cost as a share of the whole programme's cost: with projects carved out (or National dropped) the
+    shares sum to the covered fraction, so targets scale the funding base down to the covered spend."""
+    total = float(sum(sum(p["spend_S"]) for p in raw["projects"]))
+    return {k: sum(sum(raw["projects"][p]["spend_S"]) for p in mem) / total for k, mem in groups.items()}
+
+
+def layer_opts(bits: list[str], tol: float) -> tuple[dict, set]:
+    """Variant options after the price: -tolNN (free tolerance %), -lumpwin (the approved floor: the largest spend one
+    member can put in the span, uncapped), -lumpnone, -carveN (the N largest projects leave the targets), -endo (target
+    = share of what the covered projects actually spend, instead of the fixed entitlement)."""
+    kw: dict = {"tol": tol}
+    carve: set = set()
+    for b in bits:
+        if b.startswith("tol"):
+            kw["tol"] = float(b[3:]) / 100.0
+        elif b == "lumpwin":
+            kw.update(lumpiness="window", lump_cap=float("inf"))
+        elif b == "lumpnone":
+            kw["lumpiness"] = None
+        elif b == "endo":
+            kw["endogenous"] = True
+        elif b.startswith("carve"):
+            carve = {int(b[5:])}
+        else:
+            raise ValueError(f"unknown layer option {b!r}")
+    return kw, carve
+
+
+def region_shares(raw: dict, A: dict, basis: str, exclude: set[int] = frozenset()
+                  ) -> tuple[dict[str, list[int]], dict[str, float]]:
+    """Regional target shares of the funding base: the governed regions' (National excluded, carved projects excluded)
+    share of programme cost (pool fraction), split by cost share or by a 50/50 blend of population and cost share."""
+    allg = groups_of(raw, A, "region", exclude=exclude)
+    cs_all = shares_of_total(raw, allg)
     gov = {k: v for k, v in allg.items() if k != "National"}
     pool = sum(cs_all[k] for k in gov)
     cs = {k: cs_all[k] / pool for k in gov}
@@ -149,19 +191,21 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
             pv_obj = [[int(round(w[i] * v)) for v in p["pv_dim"][d]] for i, p in enumerate(A["projects"])]
             layers["pv_floor"] = {"pv": [p["pv_int"] for p in raw["projects"]], "min": int(math.ceil(f * ps["pv_int"]))}
         elif bits[0] == "cls":
-            g = groups_of(raw, A, "activity_class")
+            kw, carve = layer_opts(bits[2:], 0.20)
+            g = groups_of(raw, A, "activity_class", exclude=mega(raw, next(iter(carve))) if carve else set())
             layers.setdefault("shortfall", []).extend(LY.allocation_rows(
-                raw, g, LY.cost_shares(raw, g), CLASS_SPANS, CLASS_WEIGHTS, float(bits[1][1:]), pv_star_obj,
-                tol=0.10, norm_floor=NORM_FLOOR, prefix="class:"))
+                raw, g, shares_of_total(raw, g), CLASS_SPANS, CLASS_WEIGHTS, float(bits[1][1:]), pv_star_obj,
+                norm_floor=NORM_FLOOR, prefix="class:", **kw))
         elif bits[0] == "clshard":
             g = groups_of(raw, A, "activity_class")
             layers.setdefault("bands", []).extend(LY.hard_bands(g, LY.cost_shares(raw, g), CLASS_SPANS, tol=0.10,
                                                                 floor=NORM_FLOOR, min_share=0.02, prefix="class:"))
         elif bits[0] == "reg":
-            g, sh = region_shares(raw, A, bits[1])
+            kw, carve = layer_opts(bits[3:], 0.20)
+            g, sh = region_shares(raw, A, bits[1], exclude=mega(raw, next(iter(carve))) if carve else set())
             layers.setdefault("shortfall", []).extend(LY.allocation_rows(
-                raw, g, sh, REG_SPANS, REG_WEIGHTS, float(bits[2][1:]), pv_star_obj, tol=0.20,
-                norm_floor=NORM_FLOOR, prefix="region:"))
+                raw, g, sh, REG_SPANS, REG_WEIGHTS, float(bits[2][1:]), pv_star_obj,
+                norm_floor=NORM_FLOOR, prefix="region:", **kw))
         else:
             raise ValueError(f"unknown layer {part!r}")
     new = LY.with_layers(raw, layers, f"CPO233_{sc}__{variant}", pv_obj) if (layers or pv_obj) else dict(raw)
@@ -235,7 +279,7 @@ def metrics(sc: str, starts: dict) -> dict:
         return res
     cg = groups_of(raw, A, "activity_class")
     csh = LY.cost_shares(raw, cg)
-    out["class"] = short(cg, csh, CLASS_SPANS, CLASS_WEIGHTS, 0.10)
+    out["class"] = short(cg, csh, CLASS_SPANS, CLASS_WEIGHTS, 0.20)
     viol = 0
     for k, mem in cg.items():
         if csh[k] < 0.02:

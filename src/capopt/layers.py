@@ -65,7 +65,8 @@ def parse(raw: dict, n: int, T: int) -> Layers | None:
     lay = Layers(groups, [])
     for r in raw.get("shortfall", []):
         lo = float(r["target"]) - float(r.get("free", 0.0))
-        if lo <= 0:
+        ref_share = float(r.get("ref_share", 0.0))
+        if lo <= 0 and ref_share <= 0:
             continue  # the free tolerance covers the whole target: never charged
         segs = r["segments"]
         costs = np.array([float(c) for _, c in segs])
@@ -74,7 +75,8 @@ def parse(raw: dict, n: int, T: int) -> Layers | None:
         widths = np.array([np.inf if w is None else float(w) for w, _ in segs])
         a, b = int(r["years"][0]), min(int(r["years"][1]), T - 1)
         lay.short.append({"g": gid(r["members"]), "a": a, "b": b, "lo": lo, "widths": widths, "costs": costs,
-                          "label": r.get("label", "")})
+                          "label": r.get("label", ""), "ref_share": ref_share,
+                          "gref": gid(r["ref_members"]) if ref_share > 0 else -1})
     for r in raw.get("bands", []):
         a, b = int(r["years"][0]), min(int(r["years"][1]), T - 1)
         lay.bands.append({"g": gid(r["members"]), "a": a, "b": b, "share": float(r["share"]), "tol": float(r["tol"]),
@@ -148,11 +150,12 @@ def score(inst, starts: np.ndarray, spend_all: np.ndarray, detail: bool = False)
     pen = 0.0
     for r in lay.short:
         sp = span(gs[r["g"]], r["a"], r["b"])
-        d = max(0.0, r["lo"] - sp)
+        lo = r["lo"] + (r["ref_share"] * span(gs[r["gref"]], r["a"], r["b"]) if r["gref"] >= 0 else 0.0)
+        d = max(0.0, lo - sp)
         c = penalty_of(d, r["widths"], r["costs"]) if d > 0 else 0.0
         pen += c
         if detail:
-            rows.append({"kind": "shortfall", "label": r["label"], "spend": sp, "lo": r["lo"], "deficit": d, "cost": c})
+            rows.append({"kind": "shortfall", "label": r["label"], "spend": sp, "lo": lo, "deficit": d, "cost": c})
     out["penalty"] = pen
     if detail:
         out["rows"] = rows
@@ -185,11 +188,12 @@ class ModelRows:
         """Add option (project p, allowed index j_allowed, start s) to the row map e."""
         cs = self.cs[p]
         for g in self.lay.group_of[p]:
-            for row, r, _ in self.short_rows:
-                if r["g"] == g:
+            for row, r, _ in self.short_rows:  # spend_S - ref_share x spend_ref + u >= target - free
+                coef = (1.0 if r["g"] == g else 0.0) - (r["ref_share"] if r["gref"] == g else 0.0)
+                if coef:
                     v = window_spend(cs, s, r["a"], r["b"])
                     if v:
-                        e[row] = e.get(row, 0.0) + v
+                        e[row] = e.get(row, 0.0) + coef * v
         for lo_row, hi_row, r, mem in self.band_rows:
             v = window_spend(cs, s, r["a"], r["b"])
             if v:
@@ -206,7 +210,11 @@ class ModelRows:
         for _, r, cols in self.short_rows:
             c = gs[r["g"]]
             sp = float(c[r["b"]] - (c[r["a"] - 1] if r["a"] > 0 else 0.0))
-            left = max(0.0, r["lo"] - sp)
+            lo = r["lo"]
+            if r["gref"] >= 0:
+                cr = gs[r["gref"]]
+                lo += r["ref_share"] * float(cr[r["b"]] - (cr[r["a"] - 1] if r["a"] > 0 else 0.0))
+            left = max(0.0, lo - sp)
             for col, w in zip(cols, r["widths"]):
                 take = min(left, w)
                 x[col] = take
@@ -259,7 +267,7 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
                     tol: float = 0.10, lumpiness: str | None = "year", lump_cap: float = 0.5,
                     slopes: tuple[float, ...] = (1.0, 4.0, 12.0),
                     breaks: tuple[float, ...] = (0.10, 0.20), norm_floor: float = 2_500.0, min_share: float = 0.0,
-                    prefix: str = "", cap_attainable: bool = True) -> list[dict]:
+                    prefix: str = "", cap_attainable: bool = True, endogenous: bool = False) -> list[dict]:
     """Shortfall rows of the generic allocation layer for subsets `groups` with target `shares` over `spans` (build
     year ranges: windows, or cumulative checkpoints (0, c - 1)).
 
@@ -273,8 +281,14 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
     of total PV, pv_weight x PV*). Spans after the first scale by weights[w] / weights[0].
     cap_attainable: the target never exceeds what the subset's own pipeline can spend in the span (the sum over members
     of the most each can put there): a population-based target can exceed a region's whole pipeline, and a penalty no
-    schedule can avoid only shifts the objective and blurs its relative gap. Rows carry "norm" (N) for reporting."""
+    schedule can avoid only shifts the objective and blurs its relative gap. Rows carry "norm" (N) for reporting.
+    endogenous: the target is the subset's share of what the covered projects (all groups' members) actually spend in
+    the span, s / sum(shares) x spend_covered, instead of the fixed entitlement; it separates misallocation from
+    under-spending (MULTI_OBJECTIVE_LAYERS §3). Still linear. The free zone and the price stay sized on the fixed
+    target."""
     base = funding_base(raw, spans)
+    covered = sorted({p for mem in groups.values() for p in mem})
+    tot_share = sum(shares[k] for k in groups)
     rows = []
     for name, mem in groups.items():
         s = shares[name]
@@ -295,8 +309,12 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
             unit = (weights[w] / weights[0]) * (price_pct / 100.0) * pv_star_obj / (0.01 * N)
             widths = [bk * N for bk in breaks]
             widths = [widths[0]] + [hi - lo for lo, hi in zip(widths, widths[1:])] + [None]
+            if endogenous:
+                extra = {"target": 0.0, "ref_members": covered, "ref_share": s / tot_share}
+            else:
+                extra = {"target": target}
             rows.append({"label": f"{prefix}{name}|w{w}", "members": list(mem), "years": [a, b],
-                         "target": target, "free": free, "norm": N,
+                         **extra, "free": free, "norm": N,
                          "segments": [[wd, unit * sl] for wd, sl in zip(widths, slopes)]})
     return rows
 
