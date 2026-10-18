@@ -1306,3 +1306,33 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
     * s2000: delivery stays as even as the blend (mean 7-9%).
     * CFADS: the worst region drifts to 61-72% short at years 15-30, against 19-79% for the blend, but the mean stays at 10-17%.
   * If the late years should not drift on CFADS, a later light checkpoint (for example year 20 at low weight) is the cheap addition. It is not part of the user's stated profile, so it is not in the default.
+
+## Practitioner capabilities (from 2026-10-19)
+
+The user is preparing a practitioner's report that presents capopt as a rapid optioneering tool. Each capability below is built (where code is needed), tested, and demonstrated on the CPO data with report-ready outputs. These are capability demonstrations, not speed races: timing runs use the `1pct` / `0.5pct` presets, one seed, on a machine with at most 2 outside cores busy (the OneDrive sync keeps about 1-1.5 cores busy). Comparisons of PV use **value runs**: re-optimisations warm from the base plan, `0.5pct` preset with `rel_gap=1e-4`, 300 s cap; their achieved certified gap is reported. Driver: `benchmarks/experiments/practitioner.py` (one command per capability; chart data and tables go to the gitignored `private/report_data/`). Scenarios: CFADS = `cfads_P50`, CFADS-DS = `cfadsds_P50`.
+
+### E58: forced start windows
+
+* **What changed** (`capopt.timing`, tested): `with_windows(raw, {project: (a, b)})` restricts a project's start to [a, b], inclusive; `pin` is the single-year case a = b. It is an instance transform: the allowed starts (and their PV) are cut to the window, so the decomposition, the cash-floor bound, the screen, ALNS and warm-start repair all handle it unchanged. A window that holds none of a project's allowed starts is an error, not a silent relaxation. Tests: windowed solves match brute force (proof mode and the `1pct` preset), and a previous plan that breaks a new window is repaired into it.
+* **Bug found on the way**: the node-LP solver cache in `parallel` was keyed by `id(model)`. After the warm-start repair built and dropped its sub-models, a new model could reuse a dropped model's id with the same row count but other columns, and `_lp_node` indexed past its solution (an `IndexError`, seen once in CI). The solver now lives on the model itself (regression test in `test_smoke.py`).
+* **Arms**: P217 (the largest project, low BCR, optimal start 2046-2054) in a 2030-2035 window, or pinned to 2030; ten random mid-size projects with 5-year windows around their base starts, 5-9 years earlier than their base starts, or pinned 7 years earlier.
+
+| Scenario | Windows | PV change (value run) | Value-run gap | Warm 1% | Warm 0.5% | Cold 1% | Other projects re-timed |
+|---|---|---|---|---|---|---|---|
+| CFADS | none (base) | 0 | 0.010% | | | | |
+| CFADS | P217 in 2030-2035 | -0.73% | 0.007% | 10.1 | 13.2 | 6.9 | 171 |
+| CFADS | P217 pinned to 2030 | -1.62% | 0.008% | 52.0 | 54.4 | 9.7 | 165 |
+| CFADS | 10 windows around the base starts | 0.00% | 0.010% | 0.2 | 0.2 | 5.0 | 0 |
+| CFADS | 10 windows 5-9 years earlier | -0.01% | 0.008% | 5.3 | 5.3 | 5.0 | 92 |
+| CFADS | 10 pins 7 years earlier | -0.02% | 0.003% | 5.3 | 5.3 | 7.4 | 151 |
+| CFADS-DS | none (base) | 0 | 0.049% | | | | |
+| CFADS-DS | P217 in 2030-2035 | -2.87% | 0.143% | 67.1 | 65.1 | 39.3 | 167 |
+| CFADS-DS | P217 pinned to 2030 | -5.34% | 0.032% | 43.1 | 47.7 | 14.5 | 196 |
+| CFADS-DS | 10 windows around the base starts | 0.00% | 0.038% | 0.2 | 0.2 | 18.0 | 34 |
+| CFADS-DS | 10 windows 5-9 years earlier | -0.02% | 0.047% | 5.4 | 15.7 | 16.6 | 83 |
+| CFADS-DS | 10 pins 7 years earlier | -0.02% | 0.067% | 5.4 | 14.8 | 16.5 | 88 |
+
+* **Windows that contain the optimum cost nothing and certify at once** (0.2 s warm). Ten mid-size projects forced 5-9 years early cost only 0.01-0.02% of PV: the rest of the programme re-times around them (80-150 other projects move, mostly by a year or two, on a near-flat plateau of equally good schedules).
+* **One large, low-BCR project forced early is expensive**: 0.7% (window) to 1.6% (pin) of PV on CFADS, and 2.9% to 5.3% on CFADS-DS, where early cash is tighter. The window is worth having: letting the optimiser choose inside 2030-2035 halves the cost of the pin.
+* **Speed**: every arm certifies 1% in 5-67 s. When a pin moves a large project by decades, a cold solve is faster than a warm start from the old plan (14-39 s against 43-67 s on CFADS-DS): the repaired old plan is far from the new optimum, while for small or contained windows warm is faster (0.2-5 s).
+* **Verdict**: forced windows are an instance option (`timing.with_windows`, `timing.pin`). For a big override, start cold.
