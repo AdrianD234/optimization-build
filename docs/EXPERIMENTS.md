@@ -1149,3 +1149,32 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **The worst-case term tightens the worst region at the checkpoints it covers** (c10 shortfall 1-6% instead of 3-18%), at the same speed. On its own it does nothing between checkpoints.
 * **Time:** all variants certify 1% in 21-29 s. At 0.5%, 5-yearly checkpoints are slower (46-70 s on s2000) and miss 120 s on CFADS, with a 0.76-0.78% gap.
 * **Verdict.** For the regional layer, **5-yearly checkpoints plus the worst-case term (`-cp5-wc0.01`)** give the most even regional delivery for at most 0.3 points of PV. Certify those runs at 1%. The 10/20/30 form stays the faster 0.5% option. The final choice of regional default waits for E56 (the user's population-only, early-horizon profile).
+
+### E56: the user's early-horizon population profile (regional)
+
+* **The user's design.** The target is 100% population share, with no cost blend, applied **only at early checkpoints**. Over the full horizon a population target cannot hold, because a region runs out of selected projects. Early on there is room to pull projects forward. The rest of the design:
+  * soft, within ±X% (free band), shortfall penalised;
+  * each region's target capped at what its pipeline can spend by then (the existing safeguard).
+* **Implementation.**
+  * `reg-pop` basis: population share of the governed regions (National excluded), x the pool fraction.
+  * `-atY[_Y2]`: cumulative checkpoints at those years only, half-per-decade decay.
+  * New yardstick in the metrics: the worst region's population-share shortfall at years 5 and 10 (20% free).
+* **Variants:** checkpoints {year 5, year 10, years 5 and 10} x free band {±10%, ±20%}, x = 0.01%; cold, 1 seed, 120 s cap. The stored Total plan's worst population shortfall is 63% / 80% at years 5 / 10 (s2000) and 55% / 67% (cfadsds).
+
+| Scenario | Variant | 1% | 0.5% | Total PV | Worst population shortfall y5 / y10 |
+|---|---|---|---|---|---|
+| s2000_P50 | year 5 only, ±10% | 14.4 | 17.3 | 100.0% | 6% / 49-50% |
+| s2000_P50 | year 10 only, ±10% | 22.1 | 55.6 | 99.9-100.0% | 0-33% / 0-1% |
+| s2000_P50 | **years 5 + 10, ±10%** | 34.4 | 53.7 | 99.6-99.9% | **0% / 0%** |
+| s2000_P50 | years 5 + 10, ±20% | 22.4 | 33.9 | 99.6-99.7% | 0% / 0% |
+| s2000_P50 | blend at 10/20/30 (E46) | 21.5 | 22.5 | 99.7-99.8% | 26-44% / 7-25% |
+| cfadsds_P50 | year 5 only, ±10% | 16.6 | 27.0 | 99.6% | 0-13% / 47-52% |
+| cfadsds_P50 | year 10 only, ±10% | 21.4 | 50.0 | 99.3% | 43-49% / 0-9% |
+| cfadsds_P50 | **years 5 + 10, ±10%** | 16.0 | 23.2 | 99.4% | **0-3% / 2-4%** |
+| cfadsds_P50 | years 5 + 10, ±20% | 22.5 | >120 (0.57%) | 99.3-99.5% | 2-7% / 0-20% |
+| cfadsds_P50 | blend at 10/20/30 (E46) | 25.8 | 71.8 | 99.3-99.4% | 49% / 40-51% |
+
+* **Both early checkpoints are needed.** Either one alone leaves the other year 25-52% short.
+* **With both, population fairness in the first decade is near-exact** (worst region 0-4% short), for 0.1-0.6% of Total PV. It certifies 1% in 16-34 s and 0.5% in 23-54 s: as fast as the blend, and faster than cost share.
+* **±10% is the better band.** It is equally cheap and certified 0.5% on CFADS where ±20% did not.
+* **Verdict: the regional default becomes the user's profile.** Population share, cumulative checkpoints at years 5 and 10, ±10% free, capped at attainable spend, x = 0.01% (`cpo_layers.DEFAULT_VARIANT = cls-x0.01+reg-pop-x0.01-at5_10-tol10`). It settles the target-basis question without a 50/50 compromise. Blend and cost share stay variants. After year 10 the layer sets no regional target, by design. E54 measures the default pair on all 10 scenarios.
