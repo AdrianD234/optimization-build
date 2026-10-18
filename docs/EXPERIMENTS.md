@@ -1095,3 +1095,31 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
     * c-MIR / cover cuts on the most violated shortfall rows, with the dominant member's spend as the divisor (MULTI_OBJECTIVE §2);
     * a proof-length run of one hard case, to learn how much of the 0.6-0.85% is really primal.
   * Meanwhile the practical answer for CFADS with a regional cost-share layer is a 1-1.5% certified gap in 2 minutes, or the blend basis (E46-E47b).
+
+### E50: dual-side levers on the hard layered CFADS cases
+
+* **Setup.**
+  * Cases (cfadsds_P50, cold, 120 s cap): E49 found the two cost-share cases bound-limited, plus the chosen default pair (class + regional blend).
+  * Seeds: 2 at 0.5% and 1 at 1%.
+  * Arms are levers that already exist:
+    * the presets as they are (4-candidate strong branching, 24 leaves);
+    * `sb_candidates=16`, the E22-E23 CFADS bound-stall rule;
+    * automatic strong branching with 60 leaves;
+    * `cut_rounds=5`, root GUB-cover cuts.
+
+| Case | Preset | base | sb16 | sbauto + 60 leaves | root cuts |
+|---|---|---|---|---|---|
+| region (cost) | 0.5% | >120 (1.41%) / >120 (1.42%) | **46.3 / 48.6** | 66.8 / 92.8 | 106.2 / >120 (0.95%) |
+| region (cost) | 1% | >120 (1.59%) | **45.0** | 45.7 | 89.8 |
+| class + region (cost) | 0.5% | >120 (0.94%) / >120 (0.98%) | >120 (1.02%) / >120 (1.96%) | >120 (1.06%) / >120 (2.00%) | >120 (1.87%) / failed |
+| class + region (cost) | 1% | **59.9** | >120 (1.08%) | >120 (1.98%) | 63.3 |
+| class + region (blend), the default | 0.5% | **31.2** / >120 (0.52%) | >120 (0.57%) / >120 (0.62%) | 41.4 / >120 (0.68%) | 120.1 / >120 (0.55%) |
+| class + region (blend), the default | 1% | **24.9** | 48.8 | 41.9 | 34.4 |
+
+* **Stronger strong branching certifies the regional cost-share layer alone at 0.5%, in 46-49 s, where the presets fail in 120 s.**
+  * Its bound is 0.06-0.1 points tighter than base, and its incumbents are better too.
+  * This is the same lever that fixed the CFADS bound stall without layers (E22-E23).
+* **On class + region and on the default blend pair it costs time.** At 1%: 60 s → >120 s and 25 s → 49 s. The wider strong branching delays the leaves that find schedules.
+  * Class + region (cost share) stays uncertified at 0.5% under every arm. Its bounds improve (0.74-0.77 points below the best known, against 0.94-0.97), but the pooled best-known gap is still 0.74%.
+* **Root cuts change little. One cuts run failed with an IndexError** that did not reproduce. The campaign runner now records a failed run's traceback, so a recurrence can be diagnosed. `cut_rounds` with layers stays unsupported in practice (opt-in, off).
+* **Verdict (and E53).** The presets stay as they are. The default pair certifies fastest with them (25 s to 1%, 31 s or a 0.52% gap at 0.5%). For a run with the regional **cost-share** layer alone, pass `sb_candidates=16`. No automatic rule: the effect reverses as soon as the class layer joins.
