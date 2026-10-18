@@ -976,3 +976,38 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **INC + class on CFADS is the cheapest blend to certify** (14-20 s): class adherence is complete, and INC +7.7%.
 * **Warm starts from the Total plan are slower than cold across the blends**, as for each layer alone.
 * **Verdict.** Blends work and keep their PV cost additive. For a fast certified answer, use one or two layers. The triple certifies within about a minute on the flat envelope, but not on CFADS within 2 minutes; the CFADS triple with the regional blend basis is E47b.
+
+### E48: knob calibration and trade-off frontiers (Stage C)
+
+* **Method** (MULTI_OBJECTIVE §4): a chained sweep with `cpo_layers.py frontier`.
+  * Points run in the direction that loosens the problem: a lower PV floor, or a higher price.
+  * Each point warm-starts from the previous point's plan, so reuse is free.
+  * Every point is a `1pct` solve on cfadsds_P50 with a 180 s cap.
+* **Dimension frontier** (INC, floor f swept down from 0.995; the first point warm-starts from the CPO plan):
+
+| f | Seconds to certified 1% | Total PV | INC score | Raw INC PV |
+|---|---|---|---|---|
+| 0.995 | >180 (1.20%) | 99.50% | +2.8% | |
+| 0.99 | 177.4 | 99.00% | +4.7% | |
+| 0.985 | 31.0 | 98.58% | +5.4% | |
+| 0.98 | 65.8 | 98.01% | +6.2% | |
+| 0.975 | >180 (1.06%) | 97.80% | +6.7% | |
+| 0.97 (≈ f_free) | 15.6 | 97.17% | +7.8% | +2.8% (E44) |
+
+  * Across the whole curve, about 2 points of INC score per point of Total PV, steepest near f = 1 (+2.8% for the first 0.5 point).
+  * Neighbouring points are 0.5 points of PV apart, while each certified gap is up to 1% of the score (MULTI_OBJECTIVE §5). By the 4g rule only the overall slope is signal; the local rates are not.
+  * A binding floor costs time: 31 s to more than 180 s, against 16 s unconstrained.
+* **Class price frontier** (x swept up; all five points certified 1% in 14-24 s):
+
+| x (% of PV\* per 1% shortfall in window 1) | Total PV | Class w1 / w2 |
+|---|---|---|
+| none (Total plan) | 100% | 48% / 31% |
+| 0.001 | 99.87% | 45% / 23% |
+| 0.003 | 99.61% | 21% / 8% |
+| **0.01** | 99.59% | 0% / 3% |
+| 0.03 | 99.52% | 1% / 0% |
+| 0.1 | 99.52% | 1% / 0% |
+
+  * The knee is at **x = 0.01%**: full class adherence for about 0.4% of PV. A higher price buys nothing more; the layer saturates.
+  * The PV differences between the last three points (0.07%) are well inside the 1% gap. The adherence change is the signal.
+  * The whole sweep took under 2 minutes, which is what the presets make possible.
