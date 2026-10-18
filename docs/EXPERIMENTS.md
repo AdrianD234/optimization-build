@@ -1051,11 +1051,14 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 |---|---|---|---|---|
 | Dimension scoring | `w_p x PV_D` (CPO notebook weights), Total PV ≥ f · PV\*, carry kept; lexicographic polish before reporting | INC; pick f from the frontier (0.97-0.985 certify fast) | 1-3% for +2-3% raw INC (+5-8% score) | 15-30 s / 20-60 s |
 | Activity class | soft, shortfall-only, fixed entitlement base, 20% free or the single-year lumpiness floor (capped at half the target), slopes 1:4:12, windows 1:0.81:0.66:0.54 | x = 0.01% | 0.2-0.5% | 24-32 s / 36-46 s |
-| Region | as class; cumulative checkpoints 10/20/30 at 4:2:1, targets capped at attainable spend, National excluded | x = 0.01% (blend) / 0.03% (cost share); **basis is the user's choice** | 0.1-0.8% (blend), 0.5-1.6% (cost) | 22-26 s / 22-72 s (blend); cost share uncertified on CFADS |
+| Region | **the user's early-horizon population profile (E56)**: 100% population share at cumulative checkpoints 5 and 10 only, ±10% free, capped at attainable spend, National excluded. Variants: blend or cost share at 10/20/30 (or 5-yearly + worst-case, E51) | x = 0.01% | 0.1-0.6% | 16-34 s / 23-54 s |
 | Two layers | class + region | as above | 0.3-1.3% | 18-89 s / 32-79 s |
 | All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
 
-* **Chosen default (2026-10-19): class at x = 0.01% and region on the blend basis at x = 0.01%** (`cpo_layers.DEFAULT_VARIANT`). The blend was cheaper and faster on both scenarios, and cost-share targets are circular: the pipeline sets its own target (MULTI_OBJECTIVE §3). Cost share remains a variant (`reg-cost-x0.03`).
+* **Chosen default (updated after E56): class at x = 0.01% plus the population profile at years 5 and 10** (`cpo_layers.DEFAULT_VARIANT`). Two intermediate choices were superseded:
+  * the blend basis (cheaper and faster than cost share; cost-share targets are circular, since the pipeline sets its own target, MULTI_OBJECTIVE §3);
+  * then the user's early-horizon population profile, which beats both in the first decade.
+  * Blend and cost share remain variants (`reg-blend-x0.01`, `reg-cost-x0.03`).
 * **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
 * **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap).
   * Easy cases certify once the primal side finds a low-penalty schedule.
