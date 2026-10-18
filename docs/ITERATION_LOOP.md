@@ -191,13 +191,14 @@ Timing uses the certified-gap presets. The research note behind the queue is [re
 | E51 | 5-yearly regional checkpoints, worst-case term | ✅ option | 10/20/30 checkpoints let a region fall 27-35% short in between; 5-yearly fixes it for ≤ 0.3 points of PV |
 | E55 | MIR cuts on the shortfall rows | ✅ adopted (presets `layer_cuts=5`) | every hard case faster; the default-style pair 0.5% 101-108 s → 32-37 s |
 | E56 | The user's early-horizon population profile (years 5 and 10, ±10%) | ✅ regional default | near-exact population fairness in the first decade for 0.1-0.6% PV; 1% in 16-34 s |
-| E54 | Chosen defaults on all 10 scenarios | running | |
-| E52 | Final proof run of the chosen defaults | queued | |
+| E54 | Chosen defaults on all 10 scenarios | ✅ | 0.2-1.1% PV; cold 1% on 9 of 10 within 2 min (16-109 s), 0.5% on 6 of 10; s1750 and CFADS-P95 at 0.5% open |
+| E52 | Final proof run of the chosen defaults | ✅ | 30 min: gap 0.014% (s2000) / 0.065% (CFADS); the 0.5% answers were within 0.15-0.33% of optimal |
+| E57 | Layered model iteration (edit 1-5 projects, warm from the previous layered plan) | ✅ | median about 4 s to 1%, about 20 s to 0.5% |
 | — | Lumpiness floor: largest member *window* spend was larger than the target for most cells (rows off). Now the largest single-year member spend, capped at half the target (MULTI_OBJECTIVE §3: region-specific floor) | ✅ | E45 setup |
 | — | Population targets above a region's whole pipeline (Canterbury 7.7% vs 2.6% of cost). Targets are now capped at what the pipeline can spend | ✅ | E46 setup |
 | — | Endogenous base (✅ built, E45/E46), mega carve-out (✅ E45/E46), 5-yearly checkpoints, worst-case term, mega-project start enumeration (MULTI_OBJECTIVE §2-3) | ◐ | 5-yearly checkpoints and a worst-case term not tried; enumeration tried in E49 (no gain); next: cuts on the shortfall rows |
 
-**Status of the distribution layers track (2026-10-19): Stages A-C done.** The recommended defaults are in EXPERIMENTS.md "Distribution layers: recommended defaults". Open:
+**Status of the distribution layers track (2026-10-19): done (E44-E57).** Stages A-C, the user's population profile as the regional default, and shortfall MIR cuts in the presets. The recommended defaults are in EXPERIMENTS.md "Distribution layers: recommended defaults". Open:
 - the regional target basis (cost share or blend), which is the user's call;
 - the hard CFADS cases are bound-limited (E49): cuts on the shortfall rows are the next lever;
 - 5-yearly checkpoints and a worst-case regional term;

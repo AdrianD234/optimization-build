@@ -1262,3 +1262,20 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 
 * **Neither reached 0.01% in 30 minutes, but both are now certified close to the optimum.** The 1-2 minute 0.5% answers of E54 were within 0.15% (s2000) and 0.33% (CFADS) of the optimal layered schedule, as the presets promise.
 * The 1e-5 standard of the no-layer KPI is out of reach for layered models in this budget, as expected from E49-E55 (bound-limited). For decision use, the 0.5% preset answer is accurate enough. A 0.1% answer needs tens of minutes.
+
+### E57: one model iteration with the default layers (the E38 protocol)
+
+* **Setup.**
+  * Edits: k = 1, 3 or 5 random projects of the layered s2000_P50 and cfadsds_P50 instances. Spend and PV are scaled by U[0.8, 1.2] and the earliest start is delayed 1-2 years, exactly as in E38.
+  * Each edited instance is re-solved warm from the previous *layered* plan (E54's best), repaired where infeasible.
+  * Presets as merged, 1 seed, 120 s cap. `s` = certified by the screen alone after the repair.
+
+| Edited projects | s2000 1% | s2000 0.5% | cfadsds 1% | cfadsds 0.5% |
+|---|---|---|---|---|
+| 1 | 1.0s | 8.9 | 0.6s | 19.7 |
+| 3 | 6.2s | 19.9 | 27.9 | 115.1 |
+| 5 | 9.7 | 17.8 | 2.0s | 19.6 |
+
+* **A layered model iteration re-solves in seconds.** Median about 4 s to 1% (4 of 6 certified by the screen) and about 20 s to 0.5%. Cold layered solves of the same scenarios take 20-32 s and 38-42 s (E54).
+* Without layers, E38 took 1.6 s / 3.0 s. With layers the screen certifies less often, because the edited plan's penalty moves, so the tree runs more.
+* **Verdict.** In day-to-day use, keep the previous layered plan and warm-start from it. A plan made for a different objective (the Total plan) does not help (E44-E54).
