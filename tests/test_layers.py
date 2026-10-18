@@ -164,3 +164,29 @@ def test_lumpiness_floor_is_capped():
     big = max(max(raw["projects"][p]["spend_S"]) for p in mem)
     r = LY.allocation_rows(raw, {"A": mem}, {"A": 0.5}, [(0, 1)], [1.0], 0.1, 1e9, tol=0.0, lump_cap=0.5)[0]
     assert r["free"] == pytest.approx(min(0.5 * r["target"], big))
+
+
+def test_unsolvable_node_lp_becomes_an_open_leaf(monkeypatch):
+    """E44: a node LP that ends neither optimal nor infeasible (twice) is kept open with no bound, not raised."""
+    import highspy
+
+    from capopt import parallel as P
+
+    class Stuck:
+        def changeColsBounds(self, *a):
+            pass
+
+        def run(self):
+            pass
+
+        def getModelStatus(self):
+            return highspy.HighsModelStatus.kNotset
+
+        def modelStatusToString(self, s):
+            return "Not Set"
+
+    model = last_year_model(I.from_dict(layered(0)), 8, "step", "cumulative")
+    monkeypatch.setattr(P, "_lp_solver", lambda m: Stuck())
+    monkeypatch.setattr(P, "_highs", lambda *a, **k: Stuck())
+    node = P._lp_node(model, [])
+    assert node is not None and node.bound == -np.inf and node.frac == []
