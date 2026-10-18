@@ -43,10 +43,11 @@ class Layers:
     bands: list[dict] = field(default_factory=list)  # g, a, b, share, tol, floor, label
     pv_floor: list[np.ndarray] | None = None
     pv_min: float = 0.0
+    worst: list[dict] = field(default_factory=list)  # cost, rows [g, a, b, lo, norm], label
 
     @property
     def empty(self) -> bool:
-        return not self.short and not self.bands and self.pv_floor is None
+        return not self.short and not self.bands and self.pv_floor is None and not self.worst
 
 
 def parse(raw: dict, n: int, T: int) -> Layers | None:
@@ -81,6 +82,12 @@ def parse(raw: dict, n: int, T: int) -> Layers | None:
         a, b = int(r["years"][0]), min(int(r["years"][1]), T - 1)
         lay.bands.append({"g": gid(r["members"]), "a": a, "b": b, "share": float(r["share"]), "tol": float(r["tol"]),
                           "floor": float(r.get("floor", 0.0)), "label": r.get("label", "")})
+    for blk in raw.get("worst", []):
+        rows = [{"g": gid(r["members"]), "a": int(r["years"][0]), "b": min(int(r["years"][1]), T - 1),
+                 "lo": float(r["lo"]), "norm": float(r["norm"])} for r in blk["rows"]]
+        if float(blk["cost"]) < 0:
+            raise ValueError("worst-case cost must be non-negative")
+        lay.worst.append({"cost": float(blk["cost"]), "rows": rows, "label": blk.get("label", "")})
     if raw.get("pv_floor"):
         lay.pv_floor = [np.asarray(v, dtype=np.int64) for v in raw["pv_floor"]["pv"]]
         lay.pv_min = float(raw["pv_floor"]["min"])
@@ -156,6 +163,11 @@ def score(inst, starts: np.ndarray, spend_all: np.ndarray, detail: bool = False)
         pen += c
         if detail:
             rows.append({"kind": "shortfall", "label": r["label"], "spend": sp, "lo": lo, "deficit": d, "cost": c})
+    for blk in lay.worst:
+        m = max([0.0] + [(r["lo"] - span(gs[r["g"]], r["a"], r["b"])) / r["norm"] for r in blk["rows"]])
+        pen += blk["cost"] * m
+        if detail:
+            rows.append({"kind": "worst", "label": blk["label"], "max_norm_shortfall": m, "cost": blk["cost"] * m})
     out["penalty"] = pen
     if detail:
         out["rows"] = rows
@@ -183,6 +195,15 @@ class ModelRows:
             hi_row = b.new_row(-INF, r["floor"])    # spend_S - (1 + tol) s spend_all <= floor
             self.band_rows.append((lo_row, hi_row, r, set(int(m) for m in self.lay.groups[r["g"]])))
         self.pv_row = b.new_row(self.lay.pv_min * PV_ROW_SCALE, INF) if self.lay.pv_floor is not None else None
+        self.worst_rows: list[tuple[int, list[tuple[int, dict]]]] = []  # (M column, [(row, r)])
+        for k, blk in enumerate(self.lay.worst):  # spend_S / norm + M >= lo / norm for every row; M >= 0 costs `cost`
+            m = b.var(blk["cost"], 0.0, INF, name=f"worst[{blk['label'] or k}]")
+            rs = []
+            for r in blk["rows"]:
+                row = b.new_row(r["lo"] / r["norm"], INF)
+                b.add(row, m, 1.0)
+                rs.append((row, r))
+            self.worst_rows.append((m, rs))
 
     def entries(self, p: int, j_allowed: int, s: int, e: dict[int, float]) -> None:
         """Add option (project p, allowed index j_allowed, start s) to the row map e."""
@@ -204,6 +225,13 @@ class ModelRows:
             v = float(self.lay.pv_floor[p][j_allowed]) * PV_ROW_SCALE
             if v:
                 e[self.pv_row] = v
+        groups = self.lay.group_of[p]
+        for _, rs in self.worst_rows:
+            for row, r in rs:
+                if r["g"] in groups:
+                    v = window_spend(cs, s, r["a"], r["b"])
+                    if v:
+                        e[row] = e.get(row, 0.0) + v / r["norm"]
 
     def fill(self, x: np.ndarray, starts: np.ndarray) -> None:
         gs = np.cumsum(group_spend(self.inst, self.lay, starts), axis=1)
@@ -219,6 +247,9 @@ class ModelRows:
                 take = min(left, w)
                 x[col] = take
                 left -= take
+        for m, rs in self.worst_rows:
+            x[m] = max([0.0] + [(r["lo"] - float(gs[r["g"]][r["b"]] - (gs[r["g"]][r["a"] - 1] if r["a"] > 0 else 0.0)))
+                                / r["norm"] for _, r in rs])
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -317,6 +348,15 @@ def allocation_rows(raw: dict, groups: dict[str, list[int]], shares: dict[str, f
                          **extra, "free": free, "norm": N,
                          "segments": [[wd, unit * sl] for wd, sl in zip(widths, slopes)]})
     return rows
+
+
+def worst_case_block(rows: list[dict], price_pct: float, pv_star_obj: float, label: str = "worst") -> dict:
+    """A worst-case term over allocation rows (MULTI_OBJECTIVE §3: so small subsets count): M >= every row's
+    normalised shortfall beyond its free zone, (target - free - spend) / N, and M is charged so that a worst
+    shortfall of 1% of N costs `price_pct` % of `pv_star_obj`. Endogenous-base rows are skipped (fixed targets only)."""
+    return {"label": label, "cost": price_pct / 100.0 * pv_star_obj / 0.01,
+            "rows": [{"members": r["members"], "years": r["years"], "lo": r["target"] - r["free"], "norm": r["norm"]}
+                     for r in rows if "ref_members" not in r]}
 
 
 def hard_bands(groups: dict[str, list[int]], shares: dict[str, float], spans: list[tuple[int, int]],

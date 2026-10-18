@@ -55,6 +55,10 @@ CLASS_SPANS = [(0, 2), (3, 5), (6, 8), (9, 11)]
 CLASS_WEIGHTS = [0.5 ** (3 * w / 10) for w in range(4)]
 REG_SPANS = [(0, 9), (0, 19), (0, 29)]
 REG_WEIGHTS = [4.0, 2.0, 1.0]
+# E51 (MULTI_OBJECTIVE §3): 5-yearly cumulative checkpoints, same decay (half per decade), so spend cannot bunch just
+# before years 10 / 20 / 30
+REG_SPANS5 = [(0, c - 1) for c in (5, 10, 15, 20, 25, 30)]
+REG_WEIGHTS5 = [0.5 ** ((c - 5) / 10) for c in (5, 10, 15, 20, 25, 30)]
 NORM_FLOOR = 2_500.0  # $25M in $0.01M units
 # the chosen defaults (EXPERIMENTS.md "Distribution layers: recommended defaults"): class at x = 0.01%, region on the
 # 50/50 population/cost blend basis at x = 0.01% (cheaper and faster than cost share, E46/E47b; cost share stays a
@@ -128,10 +132,13 @@ def shares_of_total(raw: dict, groups: dict[str, list[int]]) -> dict[str, float]
 def layer_opts(bits: list[str], tol: float) -> tuple[dict, set]:
     """Variant options after the price: -tolNN (free tolerance %), -lumpwin (the approved floor: the largest spend one
     member can put in the span, uncapped), -lumpnone, -carveN (the N largest projects leave the targets), -endo (target
-    = share of what the covered projects actually spend, instead of the fixed entitlement)."""
+    = share of what the covered projects actually spend, instead of the fixed entitlement). Region only: -cp5
+    (5-yearly checkpoints), -wcX (worst-case term: the worst region's normalised shortfall, 1% of it costs X% of PV*)."""
     kw: dict = {"tol": tol}
     carve: set = set()
     for b in bits:
+        if b == "cp5" or b.startswith("wc"):
+            continue  # region-only options, read by build_variant
         if b.startswith("tol"):
             kw["tol"] = float(b[3:]) / 100.0
         elif b == "lumpwin":
@@ -208,9 +215,14 @@ def build_variant(sc: str, variant: str) -> tuple[dict, Path]:
         elif bits[0] == "reg":
             kw, carve = layer_opts(bits[3:], 0.20)
             g, sh = region_shares(raw, A, bits[1], exclude=mega(raw, next(iter(carve))) if carve else set())
-            layers.setdefault("shortfall", []).extend(LY.allocation_rows(
-                raw, g, sh, REG_SPANS, REG_WEIGHTS, float(bits[2][1:]), pv_star_obj,
-                norm_floor=NORM_FLOOR, prefix="region:", **kw))
+            spans, weights = (REG_SPANS5, REG_WEIGHTS5) if "cp5" in bits else (REG_SPANS, REG_WEIGHTS)
+            rows = LY.allocation_rows(raw, g, sh, spans, weights, float(bits[2][1:]), pv_star_obj,
+                                      norm_floor=NORM_FLOOR, prefix="region:", **kw)
+            layers.setdefault("shortfall", []).extend(rows)
+            for b in bits[3:]:
+                if b.startswith("wc"):  # E51: worst-case term over the same rows
+                    layers.setdefault("worst", []).append(LY.worst_case_block(rows, float(b[2:]), pv_star_obj,
+                                                                              "region-worst"))
         else:
             raise ValueError(f"unknown layer {part!r}")
     new = LY.with_layers(raw, layers, f"CPO233_{sc}__{variant}", pv_obj) if (layers or pv_obj) else dict(raw)
@@ -296,6 +308,7 @@ def metrics(sc: str, starts: dict) -> dict:
     for basis in ("cost", "blend"):
         g, sh = region_shares(raw, A, basis)
         out[f"region_{basis}"] = short(g, sh, REG_SPANS, REG_WEIGHTS, 0.20)
+        out[f"region_{basis}_5y"] = short(g, sh, REG_SPANS5, REG_WEIGHTS5, 0.20)  # bunching check (E51)
     return out
 
 
@@ -404,7 +417,8 @@ def summary(names: list[str]) -> None:
 def compact(names: list[str]) -> None:
     """One line per run: seconds (> = not certified), certified gap, PV retained, INC/HSP score, and the class and
     regional shortfalls (worst %, first two windows / checkpoints) against the default rows."""
-    print("scenario | variant | mode | preset | s | gap | PV | score | class w1/w2 | reg cost c10/c20 | reg blend c10/c20")
+    print("scenario | variant | mode | preset | s | gap | PV | score | class w1/w2 | reg cost c10/c20 | reg blend c10/c20 | "
+          "blend worst 5-yearly")
     for (sc, v, pr, mode, _), r in _records(names):
         if not r.get("starts"):
             print(f"{sc} | {v} | {mode} | {pr} | >{r['time_limit']:.0f} | - | no schedule")
@@ -417,8 +431,9 @@ def compact(names: list[str]) -> None:
         def two(k):
             return f"{m[k][0]['worst_pct']:.0f}/{m[k][1]['worst_pct']:.0f}"
         t = f"{r['seconds']:.1f}" if r["proven"] else f">{r['time_limit']:.0f}"
+        w5 = max(x["worst_pct"] for x in m["region_blend_5y"])
         print(f"{sc} | {v} | {mode} | {pr} | {t} | {gap * 100:.2f}% | {m['pv_retained'] * 100:.2f}% | {sc_txt} | "
-              f"{two('class')} | {two('region_cost')} | {two('region_blend')}")
+              f"{two('class')} | {two('region_cost')} | {two('region_blend')} | {w5:.0f}")
 
 
 def main() -> int:

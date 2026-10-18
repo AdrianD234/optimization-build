@@ -35,6 +35,9 @@ def layered(seed: int, kinds=("short", "bands", "floor"), n: int = 6, T: int = 9
         pv_obj = [[int(v * w[p]) for v in tot[p]] for p in range(n)]
         best = sum(max(v) for v in tot)
         lay["pv_floor"] = {"pv": tot, "min": int(0.7 * best)}
+    if "short" in kinds:
+        lay["worst"] = [LY.worst_case_block([r for r in lay["shortfall"] if r["label"].startswith("cum:")], 0.3,
+                                            1e4 * 50)]
     out = LY.with_layers(raw, lay, raw["name"] + "_lay", pv_obj)
     if "bands" in kinds:
         out["layers"]["bands"] = LY.hard_bands(groups, shares, [(0, 2)], tol=0.5, floor=60.0, min_share=0.0)
@@ -62,6 +65,7 @@ def test_model_equals_evaluator_with_layers(seed, encoding, balance):
     inst = I.from_dict(layered(seed))
     assert inst.layers is not None and inst.layers.short and inst.layers.bands
     assert any(r["gref"] >= 0 for r in inst.layers.short)  # an endogenous-base row is in the mix
+    assert inst.layers.worst  # and a worst-case block
     rng = np.random.default_rng(seed)
     checked = charged = 0
     for _ in range(5000):
