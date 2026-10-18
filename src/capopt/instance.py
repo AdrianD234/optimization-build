@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from . import layers as _layers
+from . import timing as _timing
 
 PACK = Path(__file__).resolve().parents[2] / "benchmark_pack"
 HOLDOUT = PACK.parent / "benchmarks" / "holdout"  # perturbed instances, written by `capopt holdout`
@@ -35,6 +36,8 @@ class Instance:
     cash_cap: np.ndarray | None = None  # optional hard cap on the closing balance (units) in every year before the
     #                                     last build year (the final year's balance is released, never capped)
     layers: Any = None  # optional distribution layers (capopt.layers.Layers): PV floor, shortfall rows, hard bands
+    precedence: list = field(default_factory=list)  # sequencing rules (capopt.timing): (a, b, lo, hi) with
+    #                                                 lo <= start_b - start_a <= hi
 
     @property
     def n(self) -> int:
@@ -54,7 +57,11 @@ class Instance:
         cum = np.cumsum(self.F)
         idx = np.nonzero(cum >= self.total_spend)[0]
         by_funding = int(idx[0]) if len(idx) else self.T - 1
-        return max(by_funding, max(int(a[0]) + int(z) for a, z in zip(self.allowed, self.last_nz)))
+        es = [int(a[0]) for a in self.allowed]
+        if self.precedence:  # chains of sequencing rules can push the earliest finish later
+            got = _timing.earliest_starts(self.allowed, self.precedence)
+            es = list(got) if got is not None else [self.T] * self.n
+        return min(self.T - 1, max(by_funding, max(int(s) + int(z) for s, z in zip(es, self.last_nz))))
 
     def pv_of(self, p: int, s: int) -> int:
         j = int(np.searchsorted(self.allowed[p], s))
@@ -92,6 +99,7 @@ def from_dict(raw: dict[str, Any]) -> Instance:
             np.asarray(raw["cash_cap_units"], dtype=np.float64), (int(raw["T"]),)).copy(),
         raw=raw,
         layers=_layers.parse(raw.get("layers"), len(P), int(raw["T"])),
+        precedence=_timing.parse(raw),
     )
 
 

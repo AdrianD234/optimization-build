@@ -11,6 +11,7 @@ import numpy as np
 
 from .instance import Instance
 from .layers import score as score_layers
+from .timing import violation
 
 INF = float("inf")
 
@@ -66,6 +67,11 @@ def evaluate(inst: Instance, starts: np.ndarray | list[int]) -> dict[str, Any]:
             pv_sum += inst.pv_of(p, int(s))
         except KeyError as exc:
             out["reason"] = str(exc)
+            return out
+    if inst.precedence:  # sequencing rules (capopt.timing)
+        bad = violation(inst.precedence, starts)
+        if bad is not None:
+            out["reason"] = bad
             return out
     if np.bincount(starts, minlength=inst.T).max() > inst.max_starts:
         out["reason"] = "too many starts in one year"

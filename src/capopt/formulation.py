@@ -27,6 +27,7 @@ import numpy as np
 from .evaluate import evaluate
 from .instance import Instance
 from .layers import ModelRows
+from .timing import PrecedenceRows
 
 INF = highspy.kHighsInf
 
@@ -226,6 +227,7 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
             r = b.row(-INF, float(base[t] - cumF[t]), row_cols, [-1.0] * len(row_cols))
         band_rows.append(r)
     lrows = ModelRows(b, inst, INF) if inst.layers is not None else None  # distribution layers (capopt.layers)
+    prows = PrecedenceRows(b, inst, L, INF) if inst.precedence else None  # sequencing rules (capopt.timing)
     options, start_cols = [], []
     for p in range(inst.n):
         ok = inst.allowed[p] + inst.last_nz[p] <= L
@@ -256,6 +258,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
                 e[start_rows[s]] = 1.0
             if lrows is not None:
                 lrows.entries(p, int(np.nonzero(ok)[0][jj]), int(s), e)
+            if prows is not None:
+                prows.entries(p, int(s), e)
             entries.append(e)
         start_cols.append(_add_start_block(b, encoding, inst.ids[p], opts, costs, entries))
         options.append(opts)
@@ -288,8 +292,8 @@ def last_year_model(inst: Instance, L: int | None = None, encoding: str = "step"
 
 def reference_bigm(inst: Instance) -> Model:
     """The MindOpt reference model with indicators replaced by big-M rows (pulse encoding, all allowed starts)."""
-    if inst.layers is not None:
-        raise NotImplementedError("reference_bigm has no distribution layers; use last_year_model")
+    if inst.layers is not None or inst.precedence:
+        raise NotImplementedError("reference_bigm has no distribution layers or sequencing rules; use last_year_model")
     T = inst.T
     b = MipBuilder()
     F = inst.F.astype(float)
