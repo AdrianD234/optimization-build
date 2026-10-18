@@ -92,21 +92,19 @@ class Node:
     n_frac: int = field(compare=False, default=0)  # projects fractional in the LP (all of them, not just the top 32)
 
 
-_LP_CACHE: dict[int, tuple[highspy.Highs, int]] = {}
-
-
 def _lp_solver(model: Model) -> highspy.Highs:
     """One LP-relaxation HiGHS instance per model, reused across tree nodes: a node only changes column bounds, so
     dual simplex warm-starts from the previous basis instead of rebuilding the model and solving it cold. On the
     233-project CPO models this took the 60-leaf ramp-up from ~40 s to a few seconds. Rebuilt when the model gains
     rows (root cuts). No time limit: HiGHS counts `time_limit` over the object's whole life, so a 60 s cap made every
-    node LP after the first minute of tree work return "time limit", which used to read as infeasible (pruned)."""
-    key = id(model)
-    cached = _LP_CACHE.get(key)
+    node LP after the first minute of tree work return "time limit", which used to read as infeasible (pruned).
+    The solver lives on the model itself: a module-level cache keyed by id(model) handed a garbage-collected model's
+    solver to a new model that reused its id and had the same row count but other columns (an IndexError in
+    _lp_node, seen in CI after a warm-start repair built and dropped sub-models)."""
+    cached = model.aux.get("lp_solver")
     if cached is None or cached[1] != len(model.builder.row_lo):
-        h = _highs(model, [], True, np.inf)
-        _LP_CACHE[key] = (h, len(model.builder.row_lo))
-        cached = _LP_CACHE[key]
+        cached = (_highs(model, [], True, np.inf), len(model.builder.row_lo))
+        model.aux["lp_solver"] = cached
     return cached[0]
 
 
