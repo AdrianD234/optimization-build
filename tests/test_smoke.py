@@ -183,13 +183,24 @@ def test_node_lp_never_prunes_on_a_time_limit(instances, monkeypatch):
     """Regression: the cached node-LP solver had a 60 s lifetime time limit; after it, every node read as infeasible."""
     from capopt import parallel as P
     model = last_year_model(instances["P100_growth_penalised"], 18, "step", "cumulative")
-    P._LP_CACHE.clear()
     root = P._lp_node(model, [])
     h = P._lp_solver(model)
     h.setOptionValue("time_limit", 0.0)  # simulate the exhausted lifetime limit
     again = P._lp_node(model, [])
     assert again is not None and again.bound == pytest.approx(root.bound, rel=1e-9)
-    P._LP_CACHE.clear()
+
+
+def test_node_lp_solver_belongs_to_its_model(instances):
+    """Regression: the node-LP solver cache was keyed by id(model); a new model reusing a dropped model's id (same row
+    count, other columns) got the old solver and _lp_node indexed past its solution."""
+    from capopt import parallel as P
+    inst = instances["P100_growth_penalised"]
+    for L in (18, 19, 20):
+        model = last_year_model(inst, L, "step", "cumulative")
+        h = P._lp_solver(model)
+        assert h.getNumCol() == len(model.builder.cost) and P._lp_solver(model) is h
+        assert P._lp_node(model, []) is not None
+        del model, h
 
 
 def test_big_project_lns_matches_brute_force(tmp_path):
