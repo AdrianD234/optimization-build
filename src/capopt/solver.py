@@ -178,7 +178,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
           repair_warm: bool = True, rc_fix: bool = False, lns_rins: bool = False,
           primal_options: dict | None = None, lns_wait_incumbent: bool = False, lns_max_size: int = 45,
           root_extend: bool = False, best_first: bool = False, warm_triage: bool = False,
-          mega_first: int = 0) -> Result:
+          mega_first: int = 0, layer_cuts: int = 0) -> Result:
     """capopt's default pipeline (ladder rung I9: split-and-solve, 60 leaves, 1.5 s quick try, no static leaf cutoff).
     See docs/EXPERIMENTS.md for why each default was chosen.
     lns_big: the big-project LNS neighbourhood (E13), on by default (it only acts when lns_workers > 0).
@@ -201,6 +201,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
     own (a plan made for another objective, e.g. Total PV under dimension scoring, often ends in a worse last year).
     warm_triage (E44): when the screen finds the warm plan more than 3 x rel_gap from its bound, switch best_first on
     and the concurrent proofs off (proving every surviving last year against a weak plan swamps the machine).
+    layer_cuts (E55): rounds of root MIR cuts on the layers' shortfall rows; 0 = off.
     mega_first (E49): branch on the k largest projects first (parallel.solve_parallel); 0 = off.
     lns_max_size (E39): cap on the projects one LNS neighbourhood frees (45 before E39).
     lns_wait_incumbent (E39): on a cold start the LNS workers join the tree until the first schedule appears.
@@ -330,7 +331,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                     incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                     rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
                     steal_after=steal_after, race_after=race_after, proof_options=proof_options,
-                    low_priority=low_priority_proofs, cancel=cancels[L], rc_fix=rc_fix, mega_first=mega_first)
+                    low_priority=low_priority_proofs, cancel=cancels[L], rc_fix=rc_fix, mega_first=mega_first, layer_cuts=layer_cuts)
             tpe.shutdown(wait=False)
             log.append(f"concurrent proofs started for L={early} at {time.time() - t0:.1f}s")
             others_idle = [L for L in others if L not in background]  # idle LP trees skip the ones being proven
@@ -345,7 +346,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                            cutoff_after=cutoff_after, sb_candidates=sb_candidates, lns_big=lns_big,
                            lns_after_rampup=lns_after_rampup, lns_patience=lns_patience, lns_alns=lns_alns,
                            lns_first=lns_first, steal_after=steal_after, race_after=race_after,
-                           proof_options=proof_options, rc_fix=rc_fix, mega_first=mega_first, lns_rins=lns_rins,
+                           proof_options=proof_options, rc_fix=rc_fix, mega_first=mega_first, layer_cuts=layer_cuts, lns_rins=lns_rins,
                            primal_options=primal_options, lns_wait_incumbent=lns_wait_incumbent,
                            lns_max_size=lns_max_size, root_extend=root_extend)
         log += [f"L={L}: " + s for s in r.log] + [f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s"]
@@ -403,7 +404,7 @@ def solve(name: str, workers: int | None = None, time_limit: float = 900.0, n_le
                            incumbent=best_starts, t0=t0, slice_seconds=slice_seconds, leaf_cutoff=leaf_cutoff,
                            rel_gap=rel_gap, seed=seed, cutoff_after=0.0, sb_candidates=sb_candidates,
                            steal_after=steal_after, race_after=race_after, proof_options=proof_options,
-                           rc_fix=rc_fix, mega_first=mega_first)
+                           rc_fix=rc_fix, mega_first=mega_first, layer_cuts=layer_cuts)
         log.append(f"L={L}: obj {r.objective:.6f} proven {r.proven} {r.seconds:.1f}s")
         status[L] = "solved" if r.proven else "time limit"
         proven_all &= r.proven

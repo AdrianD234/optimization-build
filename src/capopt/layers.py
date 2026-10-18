@@ -393,3 +393,105 @@ def report(inst, starts) -> dict[str, Any]:
     starts = np.asarray(starts, dtype=np.int64)
     spend, _ = spend_profile(inst, starts)
     return score(inst, starts, spend, detail=True)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# E55: MIR cuts on the shortfall rows (the dual side of the Jensen / lumpiness gap, MULTI_OBJECTIVE_LAYERS §2)
+# --------------------------------------------------------------------------------------------------------------------
+
+def _pulse_values(model, x: np.ndarray) -> list[np.ndarray]:
+    """Per project, the value of 'starts at option j' from a model vector (pulse columns, or step differences)."""
+    out = []
+    for cols in model.start_cols:
+        v = np.asarray(x[cols], dtype=float)
+        if model.encoding == "pulse":
+            out.append(v)
+        else:  # z_j = started by option j for j < K-1, z_{K-1} = 1
+            out.append(np.diff(np.concatenate(([0.0], v, [1.0]))))
+    return out
+
+
+def _to_model_row(model, terms: dict[int, dict[int, float]], ucols: list[int], ucoef: float,
+                  rhs: float) -> tuple[float, float, list[int], list[float]]:
+    """sum_p sum_j c_pj [p starts at option j] + ucoef sum(u) >= rhs, in the model's own columns."""
+    coef: dict[int, float] = {}
+    for p, cj in terms.items():
+        cols, K = model.start_cols[p], len(model.options[p])
+        c = np.array([cj.get(j, 0.0) for j in range(K)])
+        if model.encoding == "pulse":
+            for j in range(K):
+                if c[j]:
+                    coef[cols[j]] = coef.get(cols[j], 0.0) + float(c[j])
+        else:  # sum_j c_j (z_j - z_{j-1}) = sum_{j<K-1} (c_j - c_{j+1}) z_j + c_{K-1}
+            for j in range(K - 1):
+                d = float(c[j] - c[j + 1])
+                if d:
+                    coef[cols[j]] = coef.get(cols[j], 0.0) + d
+            rhs -= float(c[K - 1])
+    for u in ucols:
+        coef[u] = coef.get(u, 0.0) + ucoef
+    return float(rhs), np.inf, list(coef), list(coef.values())
+
+
+def shortfall_mir(model, x: np.ndarray, max_cuts: int = 100, min_violation: float = 1e-4) -> list[tuple]:
+    """Most violated MIR cut per fixed-target shortfall row at the LP point x. For a row
+    sum_{p,j} a_pj [p starts at j] + sum_k u_k >= D (a >= 0, u >= 0) and a divisor d > 0, with f = frac(D/d) > 0,
+        sum (floor(a/d) + min(1, frac(a/d)/f)) [p starts at j] + sum_k u_k / (d f) >= ceil(D/d)
+    is valid (MIR of the covering knapsack). Divisors tried: the largest member spends in the row and D/k."""
+    lay = model.inst.layers
+    if lay is None or not lay.short:
+        return []
+    names = model.builder.names
+    xp = _pulse_values(model, x)
+    cs = [np.cumsum(sp.astype(float)) for sp in model.inst.spend]
+    cuts = []
+    for r in lay.short:
+        D = r["lo"]
+        if r["gref"] >= 0 or D <= 0:
+            continue
+        ucols = [i for i, nm in enumerate(names) if nm.startswith(f"short[{r['label']}]")]
+        uval = float(sum(x[c] for c in ucols))
+        aj = {int(p): [window_spend(cs[p], int(s), r["a"], r["b"]) for s in model.options[p]]
+              for p in lay.groups[r["g"]]}
+        cands = sorted({a for v in aj.values() for a in v if a > 0}, reverse=True)[:12]
+        cands += [D / k for k in (1, 2, 3, 4, 6, 8)]
+        best = None
+        for d in cands:
+            q = D / d
+            f = q - np.floor(q)
+            if f < 1e-6 or f > 1 - 1e-6:
+                continue
+            g = {p: [np.floor(a / d) + min(1.0, (a / d - np.floor(a / d)) / f) for a in v] for p, v in aj.items()}
+            lhs = sum(float(np.dot(g[p], xp[p])) for p in g) + uval / (d * f)
+            viol = float(np.ceil(q)) - lhs
+            if viol > min_violation and (best is None or viol > best[0]):
+                best = (viol, g, 1.0 / (d * f), float(np.ceil(q)))
+        if best:
+            viol, g, ucoef, rhs = best
+            terms = {p: {j: c for j, c in enumerate(v) if c} for p, v in g.items()}
+            cuts.append((viol, _to_model_row(model, terms, ucols, ucoef, rhs)))
+    cuts.sort(key=lambda c: -c[0])
+    return [c for _, c in cuts[:max_cuts]]
+
+
+def mir_loop(model, rounds: int = 5) -> tuple[list[float], list[tuple]]:
+    """Root LP loop: separate shortfall MIR cuts, add them as rows, re-solve. Returns the LP bound per round and the
+    rows added (lo, hi, cols, vals) for shipping to the workers."""
+    from .solve import new_highs
+    bounds, added = [], []
+    for _ in range(rounds + 1):
+        h = new_highs(1)
+        h.setOptionValue("output_flag", False)
+        h.setOptionValue("solve_relaxation", True)
+        model.builder.to_highs(h)
+        h.run()
+        bounds.append(model.user(h.getInfo().objective_function_value))
+        if len(bounds) > rounds:
+            break
+        rows = shortfall_mir(model, np.asarray(h.getSolution().col_value))
+        if not rows:
+            break
+        for lo, hi, cols, vals in rows:
+            model.builder.row(lo, hi, cols, vals)
+        added += rows
+    return bounds, added
