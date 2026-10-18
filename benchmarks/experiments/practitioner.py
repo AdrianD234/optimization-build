@@ -476,6 +476,33 @@ def _schedule_shape(raw: dict, starts: dict) -> dict:
             "last_build_year": 2026 + int(max(s + z for s, z in zip(st, inst.last_nz)))}
 
 
+def cmd_growth_curves() -> None:
+    """E61 chart data (analytic, no solves): PV of a project against its start year under no growth, calendar-indexed
+    growth and opening-anchored growth (3% and 5%), for P217 and the median-size project of the scenario."""
+    from capopt import benefits as B
+    sc = _arg("--scenarios", "cfadsds_P50").split(",")[0]
+    raw = base_raw(sc)
+    sizes = [sum(p["spend_S"]) for p in raw["projects"]]
+    med = int(np.argsort(sizes)[len(sizes) // 2])
+    ids = [p["id"] for p in raw["projects"]]
+    rows = []
+    for p, role in ((ids.index("P217"), "large low-BCR (P217)"), (med, "median-size project")):
+        pr = raw["projects"][p]
+        c, _ = B.flat_annual(raw, p)
+        dur = int(pr["duration"])
+        allowed = list(range(0, int(raw["T"]) - dur + 1))
+        curves = {"no growth": B.pv_row(np.full(40, c), dur, allowed, int(raw["T"]))}
+        for g in (0.03, 0.05):
+            for an in ("calendar", "opening"):
+                curves[f"{an} {g:.0%}"] = B.pv_row(np.full(40, c), dur, allowed, int(raw["T"]), growth=g, anchor=an)
+        for j, s in enumerate(allowed):
+            rows.append({"project": role, "id": ids[p], "start_year": 2026 + s,
+                         **{f"pv_m_{k.replace(' ', '_').replace('%', 'pct')}": v[j] / PV_SCALE / 1e6
+                            for k, v in curves.items()}})
+    write_csv(REPORT / "growth" / "pv_by_start_year.csv", rows)
+    print(f"{len(rows)} rows")
+
+
 def cmd_growth() -> None:
     from capopt import benefits as B
     group = "growth"
@@ -877,8 +904,9 @@ def cmd_loop() -> None:
 
 
 COMMANDS = {"windows": cmd_windows, "sequencing": cmd_sequencing, "shapes": cmd_shapes, "growth": cmd_growth,
-            "override": cmd_override, "cpo_pairs": cmd_cpo_pairs, "small_moves": cmd_small_moves, "warm_envelopes": cmd_warm_envelopes,
-            "time_to_gap": cmd_time_to_gap, "loop": cmd_loop, "existing": cmd_existing}
+            "growth_curves": cmd_growth_curves, "override": cmd_override, "cpo_pairs": cmd_cpo_pairs,
+            "small_moves": cmd_small_moves, "warm_envelopes": cmd_warm_envelopes, "time_to_gap": cmd_time_to_gap,
+            "loop": cmd_loop, "existing": cmd_existing}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
