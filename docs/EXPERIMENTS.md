@@ -987,14 +987,14 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 
 | f | Seconds to certified 1% | Total PV | INC score | Raw INC PV |
 |---|---|---|---|---|
-| 0.995 | >180 (1.20%) | 99.50% | +2.8% | |
-| 0.99 | 177.4 | 99.00% | +4.7% | |
-| 0.985 | 31.0 | 98.58% | +5.4% | |
-| 0.98 | 65.8 | 98.01% | +6.2% | |
-| 0.975 | >180 (1.06%) | 97.80% | +6.7% | |
-| 0.97 (≈ f_free) | 15.6 | 97.17% | +7.8% | +2.8% (E44) |
+| 0.995 | >180 (1.20%) | 99.50% | +2.8% | +1.3% |
+| 0.99 | 177.4 | 99.00% | +4.7% | +2.0% |
+| 0.985 | 31.0 | 98.58% | +5.4% | +2.2% |
+| 0.98 | 65.8 | 98.01% | +6.2% | +2.4% |
+| 0.975 | >180 (1.06%) | 97.80% | +6.7% | +2.6% |
+| 0.97 (≈ f_free) | 15.6 | 97.17% | +7.8% | +2.8% |
 
-  * Across the whole curve, about 2 points of INC score per point of Total PV, steepest near f = 1 (+2.8% for the first 0.5 point).
+  * Across the whole curve, about 2 points of INC score (0.6 points of raw INC PV) per point of Total PV, steepest near f = 1: the first 0.5 point of PV buys +2.8% score and +1.3% raw INC.
   * Neighbouring points are 0.5 points of PV apart, while each certified gap is up to 1% of the score (MULTI_OBJECTIVE §5). By the 4g rule only the overall slope is signal; the local rates are not.
   * A binding floor costs time: 31 s to more than 180 s, against 16 s unconstrained.
 * **Class price frontier** (x swept up; all five points certified 1% in 14-24 s):
