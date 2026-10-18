@@ -1247,3 +1247,18 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **Warm from the stored Total plan is no faster than cold** (shifted geometric means 51 / 63 s against 44 / 59 s). That plan is far from the layered optimum, so a layered solve is effectively a cold solve.
   * Day-to-day use: the warm start that should help is a previous *layered* plan, as in E38. That is not yet measured with layers.
 * **Against the presets without layers** (final table, cold): 1% shifted geometric mean 22.7 → 43.9 s, 0.5% 34.8 → 58.6 s. The layers roughly double the time to a certified answer.
+
+### E52: proof runs of the chosen defaults ("prove at the very end")
+
+* **Setup.**
+  * Layers: the default (class + early population profile), on s2000_P50 and cfadsds_P50.
+  * Warm start: E54's best plan.
+  * Settings: the `0.5pct` preset with `rel_gap=1e-4`, automatic strong branching, 60 leaves, 60 s slices, shortfall MIR cuts; 1,800 s cap, load-clean.
+
+| Scenario | Certified gap at 1,800 s | Improvement over the E54 plan |
+|---|---|---|
+| s2000_P50 | 0.014% | 0.13% |
+| cfadsds_P50 | 0.065% | 0.26% |
+
+* **Neither reached 0.01% in 30 minutes, but both are now certified close to the optimum.** The 1-2 minute 0.5% answers of E54 were within 0.15% (s2000) and 0.33% (CFADS) of the optimal layered schedule, as the presets promise.
+* The 1e-5 standard of the no-layer KPI is out of reach for layered models in this budget, as expected from E49-E55 (bound-limited). For decision use, the 0.5% preset answer is accurate enough. A 0.1% answer needs tens of minutes.
