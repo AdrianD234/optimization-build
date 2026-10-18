@@ -1123,3 +1123,29 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * Class + region (cost share) stays uncertified at 0.5% under every arm. Its bounds improve (0.74-0.77 points below the best known, against 0.94-0.97), but the pooled best-known gap is still 0.74%.
 * **Root cuts change little. One cuts run failed with an IndexError** that did not reproduce. The campaign runner now records a failed run's traceback, so a recurrence can be diagnosed. `cut_rounds` with layers stays unsupported in practice (opt-in, off).
 * **Verdict (and E53).** The presets stay as they are. The default pair certifies fastest with them (25 s to 1%, 31 s or a 0.52% gap at 0.5%). For a run with the regional **cost-share** layer alone, pass `sb_candidates=16`. No automatic rule: the effect reverses as soon as the class layer joins.
+
+### E51: 5-yearly regional checkpoints and a worst-case term (MULTI_OBJECTIVE §3)
+
+* **What changed** (tested: model = evaluator with worst-case rows in the mix):
+  * **Worst-case primitive** (`layers.worst_case_block`, the `worst` section): a continuous M ≥ every row's normalised shortfall beyond its free zone, (target - free - spend) / N. M costs x% of PV\* per 1% of N, so the worst-off region counts on top of the sum.
+  * **New options:**
+    * `-cp5`: cumulative checkpoints at years 5, 10, ..., 30, with the same half-per-decade decay.
+    * `-wcX`: the worst-case term at price X.
+  * **New metric:** the worst blend shortfall at any 5-yearly checkpoint, which detects bunching between the 10/20/30 checkpoints.
+* **Result** (regional blend basis x = 0.01%, cold, 1 seed, 120 s cap; the baseline row is E46):
+
+| Scenario | Variant | 1% | 0.5% | Total PV | Blend c10/c20 | Worst at any 5-yearly checkpoint |
+|---|---|---|---|---|---|---|
+| s2000_P50 | 10/20/30 (E46) | 21.5 | 22.5 | 99.7-99.8% | 3-8% / 0-10% | 27-30% |
+| s2000_P50 | + worst-case | 21.5 | 31.4 | 99.6-99.7% | 1% / 0-11% | 33-50% |
+| s2000_P50 | 5-yearly | 28.7 | 46.3 | 99.5-99.7% | 1-8% / 0-4% | 1-8% |
+| s2000_P50 | 5-yearly + worst-case | 22.1 | 69.7 | 99.6-99.7% | 0-5% / 0% | 0-5% |
+| cfadsds_P50 | 10/20/30 (E46) | 25.8 | 71.8 | 99.3-99.4% | 10-18% / 5-8% | 35% |
+| cfadsds_P50 | + worst-case | 21.4 | 32.4 | 99.2% | 2-6% / 4-8% | 35-46% |
+| cfadsds_P50 | 5-yearly | 28.1 | >120 (0.78%) | 99.1% | 10% / 14% | 20% |
+| cfadsds_P50 | 5-yearly + worst-case | 28.2 | >120 (0.76%) | 99.0-99.1% | 10% / 3-7% | 15-17% |
+
+* **Three checkpoints invite bunching, as the research note predicted.** Plans optimised for years 10/20/30 leave a region 27-35% short at an in-between 5-yearly checkpoint (year 5, 15 or 25). 5-yearly checkpoints bring that worst case down to 1-20%, for 0.1-0.3 more points of PV.
+* **The worst-case term tightens the worst region at the checkpoints it covers** (c10 shortfall 1-6% instead of 3-18%), at the same speed. On its own it does nothing between checkpoints.
+* **Time:** all variants certify 1% in 21-29 s. At 0.5%, 5-yearly checkpoints are slower (46-70 s on s2000) and miss 120 s on CFADS, with a 0.76-0.78% gap.
+* **Verdict.** For the regional layer, **5-yearly checkpoints plus the worst-case term (`-cp5-wc0.01`)** give the most even regional delivery for at most 0.3 points of PV. Certify those runs at 1%. The 10/20/30 form stays the faster 0.5% option. The final choice of regional default waits for E56 (the user's population-only, early-horizon profile).
