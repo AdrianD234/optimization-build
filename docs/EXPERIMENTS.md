@@ -1011,3 +1011,18 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * The knee is at **x = 0.01%**: full class adherence for about 0.4% of PV. A higher price buys nothing more; the layer saturates.
   * The PV differences between the last three points (0.07%) are well inside the 1% gap. The adherence change is the signal.
   * The whole sweep took under 2 minutes, which is what the presets make possible.
+
+**E47b: the same blends with the regional blend basis** (50/50 population and cost share; cold only, 1 seed):
+
+| Scenario | Blend | Cold 1% | Cold 0.5% | Total PV | INC score | Class w1/w2 | Region (blend) c10/c20 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | class + region (blend) | 27.1 | 66.9 | 99.6-99.7% | | 11-14% / 0% | 0-5% / 0-11% |
+| s2000_P50 | all three (blend) | >120 (2.7%) | >120 (2.6%) | 95.4-95.5% | +7.4% | 14-16% / 0% | 19% / 5-6% |
+| cfadsds_P50 | class + region (blend) | 28.1 | 78.5 | 98.9-99.0% | | 0-1% / 0% | 2-10% / 0-8% |
+| cfadsds_P50 | all three (blend) | 62.2 | >120 (0.64%) | 96.3-96.5% | +6.9-7.0% | 0-3% / 0% | 12-13% / 10-13% |
+
+* **On CFADS, class + region certifies with the blend basis in 28 s, against 89 s with cost share.** The blend asks less of the mega-project regions.
+* **The triple stays fragile and depends on the scenario and the basis.**
+  * Blend: certifies on CFADS, but not on s2000.
+  * Cost share: the other way round.
+* **Recommendation:** two layers for routine certified runs. For the triple, the 0.5% preset is a stretch within 2 minutes. Either accept a 1-3% certified gap there, or add the mega-project start-year enumeration (not built).
