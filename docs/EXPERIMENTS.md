@@ -1026,3 +1026,39 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * Blend: certifies on CFADS, but not on s2000.
   * Cost share: the other way round.
 * **Recommendation:** two layers for routine certified runs. For the triple, the 0.5% preset is a stretch within 2 minutes. Either accept a 1-3% certified gap there, or add the mega-project start-year enumeration (not built).
+* **Regional price frontiers** (s2000_P50, both bases, x swept up, chained, `1pct`; the first point starts cold):
+
+| x | Cost basis: s | Total PV | Cost shortfall c10/c20 | Blend basis: s | Total PV | Blend shortfall c10/c20 |
+|---|---|---|---|---|---|---|
+| none (Total plan) | | 100% | 49% / 44% | | 100% | 72% / 60% |
+| 0.001 | 22.1 | 99.64% | 36% / 11% | 17.2 | 99.61% | 8% / 10% |
+| 0.003 | 16.7 | 99.90% | 21% / 11% | 1.0 | 99.61% | 8% / 10% |
+| 0.01 | 5.3 | 99.90% | 21% / 11% | 2.5 | 99.61% | 8% / 10% |
+| 0.03 | 98.3 | 99.15% | 6% / 0% | 10.3 | 99.57% | 7% / 10% |
+| 0.1 | 8.8 | 99.15% | 6% / 0% | 108.0 | 99.74% | 0% / 0% |
+
+  * **A chained sweep at a coarse gap is sticky.** Once a plan is close to adherent, its penalty at the next price is below the 1% gap, so the preset certifies the previous plan as it is. The x = 0.003 and 0.01 points (and 0.03 → 0.1 on cost) return the previous point's schedule in 1-9 s. This is the 4g rule of MULTI_OBJECTIVE §5 in practice: the frontier is only as fine as its gap. A finer regional frontier needs the 0.5% or 0.1% target, or independent cold points.
+  * **Blend:** even x = 0.001 removes most of the shortfall (72 → 8%) for 0.4% of PV. Full adherence needs x = 0.1.
+  * **Cost share:** needs x ≈ 0.03 to bring the worst checkpoint-10 region to 6%, for 0.85% of PV.
+* **Verdict (Stage C).** Frontiers cost seconds per point with the presets: class 2 min, regional 4-5 min, dimension 13 min (its binding floors are slow).
+  * **Class knob: x = 0.01%.** This is the knee: full adherence for about 0.4% PV.
+  * **Regional knob: x = 0.01%** (the CPO-equivalent λ) for the blend basis; x = 0.03% if the basis is cost share.
+  * **Dimension: report the frontier rather than a single floor.** About 2 score points per PV point; f between 0.985 and 0.97 certifies quickly.
+
+## Distribution layers: recommended defaults (2026-10-19)
+
+| Layer | Form | Default knob | PV cost (2 scenarios) | Certified 1% / 0.5% (cold, 1 seed) |
+|---|---|---|---|---|
+| Dimension scoring | `w_p x PV_D` (CPO notebook weights), Total PV ≥ f · PV\*, carry kept; lexicographic polish before reporting | INC; pick f from the frontier (0.97-0.985 certify fast) | 1-3% for +2-3% raw INC (+5-8% score) | 15-30 s / 20-60 s |
+| Activity class | soft, shortfall-only, fixed entitlement base, 20% free or the single-year lumpiness floor (capped at half the target), slopes 1:4:12, windows 1:0.81:0.66:0.54 | x = 0.01% | 0.2-0.5% | 24-32 s / 36-46 s |
+| Region | as class; cumulative checkpoints 10/20/30 at 4:2:1, targets capped at attainable spend, National excluded | x = 0.01% (blend) / 0.03% (cost share); **basis is the user's choice** | 0.1-0.8% (blend), 0.5-1.6% (cost) | 22-26 s / 22-72 s (blend); cost share uncertified on CFADS |
+| Two layers | class + region | as above | 0.3-1.3% | 18-89 s / 32-79 s |
+| All three | | as above | 3-5% | 62 s to >120 s; often a 1-3% gap at 120 s |
+
+* **Run layered solves cold, or warm with `warm_triage`.** A warm plan made for another objective (the Total plan) is slower than no plan at all.
+* **Every soft layer leaves the LP bound unchanged** (the Jensen / lumpiness gap), so certification depends on the primal side. The next lever, untested, is to enumerate the start years of the 2-4 largest projects as an outer loop (MULTI_OBJECTIVE §2). The hard CFADS cases (cost-share region, the triple) are where it would show.
+* **Not done:**
+  * 5-yearly checkpoints and a worst-case regional term;
+  * lexicographic polish inside frontier sweeps (it costs about 100 s a point for HSP);
+  * class × window LNS;
+  * a 1e-5 proof of the chosen defaults (the user's "prove at the very end").
