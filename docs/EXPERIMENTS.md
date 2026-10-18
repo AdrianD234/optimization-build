@@ -1245,5 +1245,5 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * The misses are the CFADS P95 pair at 0.5% and the s1750 pair. s1750_P95 is also the outlier without layers (more than 300 s cold).
   * Their certified gaps at 120 s are 0.8-1.9%.
 * **Warm from the stored Total plan is no faster than cold** (shifted geometric means 51 / 63 s against 44 / 59 s). That plan is far from the layered optimum, so a layered solve is effectively a cold solve.
-  * Day-to-day use: a previous *layered* plan is the warm start that helps, the E38 situation.
+  * Day-to-day use: the warm start that should help is a previous *layered* plan, as in E38. That is not yet measured with layers.
 * **Against the presets without layers** (final table, cold): 1% shifted geometric mean 22.7 → 43.9 s, 0.5% 34.8 → 58.6 s. The layers roughly double the time to a certified answer.
