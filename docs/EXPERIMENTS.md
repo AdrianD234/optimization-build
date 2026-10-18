@@ -871,3 +871,43 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
   * The 85-90% floors are irrelevant on these scenarios, because the unconstrained tilt never goes below 96%. A useful floor sits at or above f_free (0.96-0.99), and there it binds and slows certification sharply.
   * Recommended default: **INC**, with a lexicographic polish whenever a point is reported. The floor value comes from the Stage C frontier, which sweeps f downward from 1.0 to 0.96.
   * Time: plan on 15-50 s to 1% and 20-60 s to 0.5%, cold or warm.
+
+### E45: activity-class adherence (Stage A2)
+
+* **Layer.**
+  * Classes and cost shares come from the Costs sheet's Activity Class column.
+  * Windows: the first four 3-year NLTP windows.
+  * Target: share x funding entitlement.
+  * Shortfall-only, free within 20% of the target or the lumpiness floor.
+  * Slopes 1 : 4 : 12 beyond the free zone.
+  * Decay: half per decade, giving window weights 1 : 0.81 : 0.66 : 0.54.
+  * Price x = 0.01% (about the CPO's calibrated regional λ).
+* **Baseline:** the CPO's hard bands: ±10% of realised window spend + $25M, first 4 windows, classes with ≥ 2% share (3 of 5).
+* **Every plan is measured against the same default rows** ("worst w1 / w2" = the largest class shortfall beyond the free zone in windows 1 and 2, as % of target).
+* **Diagnostic first (MULTI_OBJECTIVE §2, Jensen / lumpiness gap).** The root LP pays 0.000-0.008% of PV in class penalty against 9-25% for the stored Total plan. The LP bound is the same as without the layer. Certifying therefore depends on the primal side finding low-penalty schedules.
+* **Lumpiness floor.** The approved floor, the most one member can put in the window, is larger than the target for most class-window cells: one mega-project can out-spend a class's whole 3-year entitlement. It switches those rows off (`-lumpwin`: the Total plan pays 0-0.3% of PV and nothing changes). The default floor is therefore the largest single-year spend of a member, capped at half the target.
+* **Result** (1 seed, 120 s cap, seconds to the certified gap; `>` = not certified):
+
+| Scenario | Variant | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | Worst w1 / w2 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | none (Total plan) | | | | | 100% | 16% / 48% |
+| s2000_P50 | **soft (default)** | 32.1 | 36.0 | 65.8 | 114.4 | 99.5-99.8% | 7-9% / 0-3% |
+| s2000_P50 | soft, window floor (approved literal) | 21.4 | 34.7 | 0.5 | 4.4 | 99.8-100% | 10-16% / 39-48% |
+| s2000_P50 | soft, mega carve-out 13 | 20.9 | 22.9 | 129 | >120 | 99.6% | 7-10% / 19-20% |
+| s2000_P50 | soft, carve-out 13 + endogenous base | 29.2 | 60.6 | >120 | >120 | 99.3-99.8% | 9-12% / 0% |
+| s2000_P50 | CPO hard ±10% | >120 | >120 | >120 | >120 | 98.7-99.1% | 0-6% / 0-6% (0 band violations) |
+| cfadsds_P50 | none (Total plan) | | | | | 100% | 48% / 31% |
+| cfadsds_P50 | **soft (default)** | 23.7 | 46.3 | 43.6 | 72.7 | 99.5-99.7% | 0-11% / 0% |
+| cfadsds_P50 | soft, window floor | 18.7 | 34.5 | 0.3 | 0.3 | 99.7-100% | 42-50% / 22-31% |
+| cfadsds_P50 | soft, carve-out 13 | 27.7 | 39.8 | 56.5 | 64.3 | 99.5-99.8% | 22-27% / 19-27% |
+| cfadsds_P50 | soft, carve-out 13 + endogenous base | 46.2 | >120 | 63.2 | 46.8 | 99.6-99.9% | 40-47% / 2-21% |
+| cfadsds_P50 | CPO hard ±10% | 25.8 | 50.8 | 36.3 | 120.1 | 98.8-98.9% | 0% / 0% (0 band violations) |
+
+* **The soft default delivers almost all of the adherence for a quarter of the hard bands' PV cost.**
+  * Cost: 0.2-0.5% of Total PV, against 1.0-1.3% for the hard bands.
+  * Adherence: window-2 shortfalls vanish, and window 1 drops to at most 11%.
+  * Speed: it certifies 1% in 24-32 s and 0.5% in 36-46 s cold. The hard bands never certify on s2000 within 120 s; on CFADS they take 26 s / 51 s.
+  * The CPO's own run of the same hard bands reported about 1% NPV and a 1,200 s time limit (ACTIVITY_CLASS_WINDOWS_FINDINGS).
+* **The carve-out is as fast but answers a different question.** With the 13 largest projects out of the targets, the remaining classes keep 19-27% shortfalls against the full-programme yardstick. On a fixed base it also charges the Total plan 27-29% of PV, because the mega-projects take the early funding. The endogenous base, which is the CPO's carve-out measurement, is slower and leaves window-1 shortfalls of 40-47% on CFADS.
+* **Warm from the Total plan is again slower than cold** (44-114 s against 24-46 s). That plan carries a 10-14% class penalty, so it is far from certified, and the concurrent proofs swamp the machine (E44). For layered solves, start cold or use `warm_triage`.
+* **Verdict.** Default class layer: **soft, 20% free, single-year lumpiness floor capped at half the target, x = 0.01%**. Keep the hard bands as the CPO-compatible baseline only. The carve-out and the endogenous base stay options.
