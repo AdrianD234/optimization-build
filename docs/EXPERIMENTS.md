@@ -1279,3 +1279,30 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **A layered model iteration re-solves in seconds.** Median about 4 s to 1% (4 of 6 certified by the screen) and about 20 s to 0.5%. Cold layered solves of the same scenarios take 20-32 s and 38-42 s (E54).
 * Without layers, E38 took 1.6 s / 3.0 s. With layers the screen certifies less often, because the edited plan's penalty moves, so the tree runs more.
 * **Verdict.** In day-to-day use, keep the previous layered plan and warm-start from it. A plan made for a different objective (the Total plan) does not help (E44-E54).
+
+**E56 addendum.** This was requested again by the other session as "E50"; that number was already taken, so it is E56.
+* **What was already covered:**
+  * pure population share, attainable caps, National excluded;
+  * year 5 / year 10 / both, at ±10% and ±20%;
+  * cfadsds_P50 and s2000_P50, cold, at 1% and 0.5%;
+  * comparison against the blend and cost share (table above);
+  * class + region on all 10 scenarios (E54).
+* **Weighting.** The 5 + 10 variant weights the checkpoints half per decade (1 : 0.71), not 2 : 1. Both checkpoints end at 0-4% shortfall in the layer's own yardstick, so the relative weight has nothing left to trade. A higher price was not needed for the same reason.
+* **Drift diagnostic** (reported only, not optimised). Each plan's shortfall below the attainable-capped population target, at checkpoints through year 30, with no free band and no lumpiness allowance. The worst / mean is taken over the 16 governed regions, as % of target, for the 0.5% cold plans.
+
+| Scenario | Plan | y5 | y10 | y15 | y20 | y30 |
+|---|---|---|---|---|---|---|
+| s2000_P50 | Total plan (CPO) | 100% / 37% | 100% / 31% | 100% / 32% | 84% / 25% | 3% / 1% |
+| s2000_P50 | population profile (5 + 10, ±10%) | 45% / 12% | 41% / 8% | 41% / 9% | 35% / 7% | 3% / 0% |
+| s2000_P50 | blend (10/20/30) | 72% / 15% | 50% / 12% | 41% / 10% | 35% / 7% | 3% / 0% |
+| s2000_P50 | cost share (10/20/30) | 100% / 31% | 81% / 30% | 60% / 16% | 60% / 14% | 12% / 1% |
+| cfadsds_P50 | Total plan (CPO) | 100% / 62% | 100% / 55% | 100% / 50% | 100% / 39% | 75% / 22% |
+| cfadsds_P50 | population profile (5 + 10, ±10%) | 47% / 12% | 52% / 22% | 61% / 17% | 72% / 12% | 68% / 10% |
+| cfadsds_P50 | blend (10/20/30) | 99% / 41% | 70% / 29% | 79% / 25% | 45% / 9% | 19% / 3% |
+| cfadsds_P50 | cost share (10/20/30) | 100% / 43% | 87% / 41% | 89% / 38% | 82% / 27% | 35% / 8% |
+
+  * **Up to year 10 the profile is the fairest of the four** (mean shortfall 8-22%). The remaining worst cases (41-52%) are small regions whose deficit is within one year's spend of a project: the free band and lumpiness floor the layer uses absorb them, which is why its own yardstick shows 0-4%.
+  * **After year 10, with no regional target by design:**
+    * s2000: delivery stays as even as the blend (mean 7-9%).
+    * CFADS: the worst region drifts to 61-72% short at years 15-30, against 19-79% for the blend, but the mean stays at 10-17%.
+  * If the late years should not drift on CFADS, a later light checkpoint (for example year 20 at low weight) is the cheap addition. It is not part of the user's stated profile, so it is not in the default.
