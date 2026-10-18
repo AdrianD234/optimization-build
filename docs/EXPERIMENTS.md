@@ -911,3 +911,39 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **The carve-out is as fast but answers a different question.** With the 13 largest projects out of the targets, the remaining classes keep 19-27% shortfalls against the full-programme yardstick. On a fixed base it also charges the Total plan 27-29% of PV, because the mega-projects take the early funding. The endogenous base, which is the CPO's carve-out measurement, is slower and leaves window-1 shortfalls of 40-47% on CFADS.
 * **Warm from the Total plan is again slower than cold** (44-114 s against 24-46 s). That plan carries a 10-14% class penalty, so it is far from certified, and the concurrent proofs swamp the machine (E44). For layered solves, start cold or use `warm_triage`.
 * **Verdict.** Default class layer: **soft, 20% free, single-year lumpiness floor capped at half the target, x = 0.01%**. Keep the hard bands as the CPO-compatible baseline only. The carve-out and the endogenous base stay options.
+
+### E46: regional fairness (Stage A3)
+
+* **Layer.**
+  * Spans: cumulative checkpoints at years 10 / 20 / 30, weights 4 : 2 : 1.
+  * Target: share x the funding entitlement, capped at what the region's own pipeline can spend by the checkpoint. The National project is excluded.
+  * Shortfall-only, free within 20% or the single-year lumpiness floor, slopes 1 : 4 : 12, x = 0.01%.
+* **Target basis** (the user's policy choice, so both are carried):
+  * **cost share**: each region's share of programme cost;
+  * **blend**: 50/50 population share (approximate Stats NZ 2024, from the CPO's per-capita work) and cost share.
+* **Variants:** a top-13 mega-project carve-out, and the endogenous base (share of realised spend).
+* **Two design findings before any run:**
+  * **Uncapped population targets are unattainable.** Canterbury's blend share is 7.7% against 2.6% of programme cost. Without the cap the stored Total plan paid 79-84% of PV in penalty that no schedule could avoid. That shifts the objective and blurs its relative gap. With targets capped at what each region's pipeline can spend, it pays 29-41%.
+  * **The root LP pays 0.04-0.09% of PV in regional penalty, against 10-17% for the Total plan.** This is the same Jensen / lumpiness gap as the class layer (MULTI_OBJECTIVE §3).
+* **Result** (1 seed, 120 s cap; shortfall = the worst region beyond its free zone at checkpoints 10 / 20, % of target; the Total plan has 49 / 44% (s2000) and 49 / 42% (cfadsds) on cost share, 72 / 60% and 67 / 70% on the blend):
+
+| Scenario | Variant | Cold 1% | Cold 0.5% | Warm 1% | Warm 0.5% | Total PV | Own-basis shortfall c10 / c20 |
+|---|---|---|---|---|---|---|---|
+| s2000_P50 | cost share | 28.9 | 101.1 | >120 | >120 | 99.1-99.5% | 5-14% / 1-13% |
+| s2000_P50 | blend | 21.5 | 22.5 | >120 | 127 | 99.7-99.9% | 3-8% / 0-12% |
+| s2000_P50 | cost share, carve-out 13 | 15.7 | 21.4 | 101 | 101 | 99.8-100% | 29-45% / 8-13% |
+| s2000_P50 | cost share, endogenous base | 23.3 | 66.5 | >120 | >120 | 99.2-99.8% | 6-21% / 8-14% |
+| cfadsds_P50 | cost share | >120 | >120 | >120 | >120 | 98.4-99.2% | 2-27% / 10-18% |
+| cfadsds_P50 | blend | 25.8 | 71.8 | 64.9 | 71.7 | 99.2-99.4% | 10-18% / 3-8% |
+| cfadsds_P50 | cost share, carve-out 13 | 28.1 | 24.8 | 73.4 | 79.2 | 99.3-99.7% | 47% / 51-69% |
+| cfadsds_P50 | cost share, endogenous base | >120 | >120 | >120 | >120 | 98.8-99.0% | 23-29% / 14-20% |
+
+* **Both target bases remove most of the regional shortfall for under 1% of Total PV.**
+  * **Blend:** the cheaper and faster of the two here (0.1-0.8% PV, 1% certified in 22-26 s cold). Capped at attainable spend, it mostly pulls small regions' projects earlier, and it asks less of the mega-project regions than cost share does.
+  * **Cost share:** pushes against the mega-project regions (Northland, Auckland). On CFADS, where early funding is thin, it does not certify within 120 s at either gap: the integer schedule pays more penalty than the LP bound sees, which is the Jensen gap.
+* **The carve-out is fast but leaves the large regions' first-checkpoint shortfall in place** under the full-programme yardstick. The endogenous base is slower and no better.
+* **Warm starts from the Total plan are slow again.** That plan carries a 10-17% penalty, so start layered solves cold or with `warm_triage` (E44/E45).
+* **Verdict.**
+  * Regional layer: **soft, capped targets, 20% free, single-year lumpiness floor, x = 0.01%, checkpoints 10 / 20 / 30 at 4 : 2 : 1**.
+  * Target basis: **the user's choice**. The blend is faster and cheaper on these two scenarios; cost share is the CPO's earlier basis and is hard to certify on CFADS.
+  * Not tried (MULTI_OBJECTIVE §3): 5-yearly checkpoints, a worst-case term, and enumerating the start years of the mega-projects. The last is the remedy for the CFADS cost-share case.
