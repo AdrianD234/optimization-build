@@ -1181,3 +1181,36 @@ Checks: the TOT kernel reproduces every instance's `pv_int` exactly, and the fiv
 * **With both, population fairness in the first decade is near-exact** (worst region 0-4% short), for 0.1-0.6% of Total PV. It certifies 1% in 16-34 s and 0.5% in 23-54 s: as fast as the blend, and faster than cost share.
 * **±10% is the better band.** It is equally cheap and certified 0.5% on CFADS where ±20% did not.
 * **Verdict: the regional default becomes the user's profile.** Population share, cumulative checkpoints at years 5 and 10, ±10% free, capped at attainable spend, x = 0.01% (`cpo_layers.DEFAULT_VARIANT = cls-x0.01+reg-pop-x0.01-at5_10-tol10`). It settles the target-basis question without a 50/50 compromise. Blend and cost share stay variants. After year 10 the layer sets no regional target, by design. E54 measures the default pair on all 10 scenarios.
+
+### E55: MIR cuts on the shortfall rows (adopted in both presets)
+
+* **Hypothesis.** E49-E50 showed the hard layered cases are bound-limited, and the root LP pays almost none of the lumpy shortfall (the Jensen gap). Each shortfall row is a covering knapsack over start choices plus continuous slack, so MIR cuts should lift the bound.
+* **The cut.** For a fixed-target shortfall row `sum_{p,j} a_pj [p starts at j] + sum_k u_k >= D` (a ≥ 0, u ≥ 0), any divisor d > 0 with f = frac(D/d) > 0 gives the valid inequality
+
+  `sum (floor(a/d) + min(1, frac(a/d)/f)) [p starts at j] + sum_k u_k / (d f) >= ceil(D/d)`
+
+  This is the MIR of the covering knapsack; the ≤-form coefficients are invalid here. A first diagnostic with them pushed the LP above a feasible schedule's value.
+* **What changed** (opt-in `layer_cuts=rounds`):
+  * `layers.shortfall_mir` separates the most violated cut per row. Divisors tried: the members' largest window spends and D/k. The cut is written in either encoding: pulse directly, or step by differencing, with constants moved to the right-hand side.
+  * `layers.mir_loop` runs the root rounds.
+  * The rows reach the workers through the existing root-cut file.
+  * Tests:
+    * every cut holds at every sampled feasible schedule, in both encodings;
+    * solves with cuts match brute force (proof mode and preset).
+* **Offline diagnostic.** On the cfadsds class + region (cost) model, 3 rounds and 32 cuts lift the root LP by 0.17% of |objective|.
+* **Result** (cfadsds_P50, cold, 2 seeds at 0.5% and 1 seed at 1%, 120 s cap):
+
+| Case | Preset | base | 5 rounds of shortfall MIR cuts |
+|---|---|---|---|
+| region (cost) | 0.5% | >120 (0.57%) / >120 (1.03%) | 120.1 / **67.1** |
+| region (cost) | 1% | >120 (1.51%) | **46.7** |
+| class + region (cost) | 0.5% | >120 (1.11%) / >120 (1.32%) | **71.2** / >120 (0.83%) |
+| class + region (cost) | 1% | 59.4 | **40.5** |
+| class + region (blend) | 0.5% | 101.3 / 107.6 | **32.1 / 36.7** |
+| class + region (blend) | 1% | 29.2 | **21.6** |
+
+* **Every cell improves or stays the same.**
+  * Each run's bound gets up to 0.25 points closer to the best known: class + region (cost) 0.48-0.53% below the best known, against 0.69-0.76% without cuts.
+  * The default-style pair certifies 0.5% three times faster.
+  * The cuts tighten the LP where the Jensen gap lives: the rows themselves. Branching on the largest projects (E49) and stronger strong branching (E50) could not do that.
+* **Verdict: adopted.** Both presets now run `layer_cuts=5`. It only acts on instances with layers, so the no-layer presets and their final table are unchanged. Covered by the existing preset tests.
