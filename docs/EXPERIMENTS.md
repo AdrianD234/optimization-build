@@ -1358,3 +1358,27 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 
 * **Every rule type is honoured and certified fast**: warm 1% in 0.4-2.8 s from the previous plan (always repaired, since the plan broke the rule), cold 1% in 5-28 s. Changes within ±0.002% are inside the value runs' certified gap (0.01% on CFADS), i.e. no measurable cost.
 * **On mid-size projects a rule is nearly free**: the optimiser re-times the pair and 40-76 other projects by a year or two, along the near-flat plateau of equally good schedules. A rule's price depends on what it binds, not on its type; rules involving a large project are measured with E62 (the cost of overriding the optimum).
+
+### E60: benefit profile shapes
+
+* **What changed** (`capopt.benefits`, tested): an instance stores only each project's PV per start. For the CPO scenarios that PV comes from a flat real benefit for 40 years after completion ("LIN40"), discounted with the MBCM factors and cut at the horizon, so the stream is recovered exactly from `pv_int` (`flat_annual`; worst misfit over 233 projects 1e-7). From the stream, `shape_stream` builds three shapes with the **same real-terms total over the same 40 years**:
+  * **linear**: the supplied stream; cumulative benefit rises in a straight line;
+  * **logarithmic**: concave accumulation `C(x) = ln(1 + 0.25x) / ln(11)`, front-loaded (34% of the total in 5 years, 52% in 10);
+  * **exponential**: convex accumulation `C(x) = (e^(mu x) - 1) / (e^(40 mu) - 1)`, back-loaded, with mu set so that it mirrors the logarithmic curve (7% in 10 years, 48% in 30).
+
+  `pv_row` / `rebuild` turn streams back into `pv_int`. Tests (`tests/test_benefits.py`): exact recovery and rebuild, equal totals, the mirror property, and front-loaded > linear > back-loaded PV.
+* **Setup**: CFADS and CFADS-DS; two scopes: a 40-project subset (35 at random plus P217, the two highest-BCR mid-size projects and the two smallest) and the whole programme. Value runs warm from the base plan (certified to 0.01-0.14%); cold `1pct` runs to show the solve itself is unaffected.
+
+| Scenario | Reshaped | Shape | Programme PV vs linear | Projects re-timed | PV gained by re-optimising (vs the linear plan, re-valued) | Cold 1% (s) |
+|---|---|---|---|---|---|---|
+| CFADS | all 233 | logarithmic | +12.9% | 25 | 0.001% | 4.5 |
+| CFADS | all 233 | exponential | -12.4% | 0 | 0 | 5.1 |
+| CFADS-DS | all 233 | logarithmic | +12.6% | 57 | 0.001% | 18.8 |
+| CFADS-DS | all 233 | exponential | -12.6% | 70 | 0.013% | 17.6 |
+| CFADS | 40 | logarithmic | +1.7% | 32 of the 40 (24 earlier, mean 4.7 years) | 0.02% | 4.5 |
+| CFADS | 40 | exponential | -1.6% | 0 | 0 | 6.7 |
+| CFADS-DS | 40 | logarithmic | +1.9% | 23 of the 40 (14 earlier) | 0.009% | 17.5 |
+| CFADS-DS | 40 | exponential | -1.9% | 23 of the 40 (14 later) | 0.115% | 15.6 |
+
+* **Any profile is just a different PV per start year**, and every case certifies 1% cold in 5-19 s, as for the supplied benefits.
+* **The shape moves the value of the programme a lot, the schedule very little.** Discounting rewards early benefits, so the same real benefits are worth about 12.5% more front-loaded and 12.5% less back-loaded. But re-optimising for the new shape gains at most 0.1% over keeping the old schedule: front-loaded projects drift a few years earlier, back-loaded ones later, and the cash envelope still sets the sequence.
