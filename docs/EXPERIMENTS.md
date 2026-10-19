@@ -1497,7 +1497,7 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 | CFADS-DS P50 | 0.3 | 0.3 | 5.9 | 225 | 19.3 | 35.1 | 384 | 961 |
 | CFADS-DS P95 | 0.3 | 0.3 | 381 | 356 | 15.4 | 71.2 | >600 (0.33%) | >1,800 (0.27%) |
 
-  Seconds; `>` = not reached by the cap (the gap then). The stored evidence agrees: the final presets table (3 seeds) has warm 1% / 0.5% in 0.2-0.3 s and cold 1% in 7-19 s on these scenarios, and the official KPI campaign proved the CFADS-DS pair warm in a median of 203-501 s.
+  Seconds; `>` = not reached by the cap (the gap then). The stored evidence agrees: the final presets table (3 seeds) has warm 1% / 0.5% in 0.2-0.3 s and cold 1% in 7-19 s on these scenarios, and the official KPI campaign proved the CFADS-DS pair warm in a median of 207-501 s.
 * **Time rises steeply in the last fraction of a percent.** Warm on CFADS-DS P50: 0.3 s to 1% and 0.5%, 6 s to 0.1%, 225 s to a proof; cold: 19 s, 35 s, 384 s, 961 s. Each tenfold tightening of the gap costs roughly ten times more time near the end, because the remaining gap sits in many medium-sized projects whose start years trade off against each other (GAP_ANATOMY).
 * **A good plan in hand changes everything near the end**: warm proofs take 1-6 minutes where cold ones take 6-16 minutes or more. Cold CFADS-DS P95 is the hard case: after 30 minutes the plan is still 0.27% from proven (its cold primal side is slow, E39), while from the stored plan it is proven in 6 minutes.
 * **CFADS-DS P95 at 0.1%**: the `0.5pct` settings with a 0.1% target (4-candidate strong branching) take longer (381 s) than the proof settings take to reach 1e-5 (356 s); for that scenario, tight targets want the proof configuration.
