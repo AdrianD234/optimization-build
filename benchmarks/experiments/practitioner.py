@@ -348,6 +348,14 @@ def cmd_sequencing() -> None:
             "B_3_to_6y_after_A_starts": [TM.lag_between(y, x, lo=3, hi=6)],
             "chain_of_4_finish_to_start": [TM.after_finish(raw, a, b) for a, b in zip(chain, chain[1:])],
         }
+        # rules with something at stake: the largest high-value project that starts before P217 (real benefit / real
+        # cost >= 2) made to wait for P217 to finish, or P217 made to start no later than it
+        from capopt.benefits import flat_annual
+        big = [q for i, q in enumerate(raw["projects"]) if q["id"] != "P217" and plan[q["id"]] < plan["P217"]
+               and 40 * flat_annual(raw, i)[0] >= 2 * sizes[i] / SPEND_SCALE * 1e6]
+        bb = max(big, key=lambda q: sum(q["spend_S"]))["id"]
+        rules["big_B_after_P217_finishes"] = [TM.after_finish(raw, "P217", bb)]
+        rules["P217_no_later_than_big_B"] = [TM.not_after(bb, "P217")]
         for arm, rr in rules.items():
             sraw = TM.with_precedence(raw, rr, name=f"CPO233_{sc}__seq_{arm}")
             path = write_instance(sraw)
