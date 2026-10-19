@@ -211,3 +211,4 @@ The user's practitioner's report presents capopt as a rapid optioneering tool. E
 |---|---|---|---|
 | E58 | Forced start windows (`timing.with_windows`, `pin`) | ✅ | windows in the optimum cost 0 and certify in 0.2 s; one large low-BCR project forced early costs 0.7-1.6% (CFADS) / 2.9-5.3% (CFADS-DS) |
 | E59 | Sequencing rules (`timing.after_start`, `after_finish`, `not_after`, `lag_between`) | ✅ | strong time-indexed rows, decomposition unchanged, brute-force tested; on mid-size projects nearly free, warm 1% in 0.4-2.8 s |
+| E60 | Benefit profile shapes (`benefits.shape_stream`: linear / logarithmic / exponential, equal real totals) | ✅ | PV ±12.5% front- vs back-loaded; re-optimising gains <= 0.1%; cold 1% in 5-19 s |
