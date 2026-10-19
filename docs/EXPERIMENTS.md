@@ -1336,3 +1336,25 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 * **One large, low-BCR project forced early is expensive**: 0.7% (window) to 1.6% (pin) of PV on CFADS, and 2.9% to 5.3% on CFADS-DS, where early cash is tighter. The window is worth having: letting the optimiser choose inside 2030-2035 halves the cost of the pin.
 * **Speed**: every arm certifies 1% in 5-67 s. When a pin moves a large project by decades, a cold solve is faster than a warm start from the old plan (14-39 s against 43-67 s on CFADS-DS): the repaired old plan is far from the new optimum, while for small or contained windows warm is faster (0.2-5 s).
 * **Verdict**: forced windows are an instance option (`timing.with_windows`, `timing.pin`). For a big override, start cold.
+
+### E59: sequencing rules (precedence)
+
+* **What changed** (`capopt.timing`, tested): an instance may carry a `precedence` section, `lo <= start_B - start_A <= hi`. Builders cover the usual rule types: `after_start` (B not before A starts, plus a lag), `after_finish` (B not before A's completion, start + duration, plus a lag; with `within=k`, B starts no later than k years after A finishes, and k = 0 means exactly then), `not_after` (B no later than A) and `lag_between` (any lag window).
+  * The evaluator rejects a schedule that breaks a rule.
+  * The fixed-last-year model writes each bound in the strong time-indexed form `[start_B <= t] <= [start_A <= t - lo]` for every year t; with the step encoding that is the two-term row `z_B,t <= z_A,t-lo`. The rules restrict starts only and do not depend on the last build year, so MIP(L) still equals the true objective at a schedule's own L and over-estimates it at a later one: the decomposition is unchanged.
+  * Chains of rules tighten Lmin (`timing.earliest_starts`, which also detects rule sets that cannot hold); warm-start repair re-times the projects of a broken rule; the numba kernel refuses such instances.
+  * Tests (`tests/test_timing.py`, 53 cases): every rule type and a chain against brute force (proof mode and the `1pct` preset); the model rows accept exactly the schedules the evaluator accepts, in both encodings, at a schedule's own and a later last year; impossible rules return no schedule; a previous plan that breaks a new rule is repaired.
+* **Demonstration** (CPO data): a random pair of mid-size projects per scenario where B starts well before A in the optimum (CFADS: A = P167, B = P088, 15 years; CFADS-DS: A = P137, B = P114, 10 years), so every rule below binds; plus a chain of four projects that must each finish before the next starts (in reverse of their optimal order). Value runs certified to 0.01-0.06%; timing with the `1pct` preset.
+
+| Rule | CFADS: PV change | warm 1% (s) | cold 1% (s) | CFADS-DS: PV change | warm 1% (s) | cold 1% (s) |
+|---|---|---|---|---|---|---|
+| B not before A starts | 0.000% | 0.4 | 7.9 | -0.001% | 0.7 | 18.6 |
+| B not before A finishes | -0.001% | 0.5 | 7.3 | -0.001% | 1.8 | 16.9 |
+| B within 2 years of A finishing | -0.002% | 0.4 | 7.9 | -0.001% | 1.8 | 28.3 |
+| B exactly when A finishes | +0.002% | 0.5 | 7.4 | -0.001% | 2.2 | 17.2 |
+| B no later than A | 0.000% | 0.4 | 7.7 | -0.001% | 0.6 | 18.4 |
+| B 3-6 years after A starts | -0.002% | 0.4 | 5.0 | -0.001% | 2.1 | 18.4 |
+| chain of 4, finish to start | 0.000% | 2.8 | 7.4 | -0.003% | 0.5 | 18.8 |
+
+* **Every rule type is honoured and certified fast**: warm 1% in 0.4-2.8 s from the previous plan (always repaired, since the plan broke the rule), cold 1% in 5-28 s. Changes within ±0.002% are inside the value runs' certified gap (0.01% on CFADS), i.e. no measurable cost.
+* **On mid-size projects a rule is nearly free**: the optimiser re-times the pair and 40-76 other projects by a year or two, along the near-flat plateau of equally good schedules. A rule's price depends on what it binds, not on its type; rules involving a large project are measured with E62 (the cost of overriding the optimum).
