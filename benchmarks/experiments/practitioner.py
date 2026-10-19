@@ -788,7 +788,10 @@ def cmd_warm_envelopes() -> None:
     targets = {  # target -> (instance, [source plans])
         "cfadsds_P50": (CPO / "instances" / "CPO233_cfadsds_P50.json", ["cfads_P50"]),
         "cfads_P50": (CPO / "instances" / "CPO233_cfads_P50.json", ["cfadsds_P50"]),
+        # total spend is 97% of total CFADS-DS funding: a 10% cut cannot pay for the whole programme (infeasible,
+        # reported as such); 2% smaller is the feasible smaller envelope
         "cfadsds_P50_x0.9": (_scaled("cfadsds_P50", 0.9), ["cfadsds_P50"]),
+        "cfadsds_P50_x0.98": (_scaled("cfadsds_P50", 0.98), ["cfadsds_P50"]),
         "cfadsds_P50_x1.1": (_scaled("cfadsds_P50", 1.1), ["cfadsds_P50"]),
     }
     for tgt, (path, sources) in targets.items():
@@ -806,7 +809,12 @@ def cmd_warm_envelopes() -> None:
             r05 = run(group, f"{tgt}__{tag}__05pct", path, 300, warm, preset="0.5pct", **extra)
             rb = run(group, f"{tgt}__{tag}__budget10", path, 10, warm, preset="0.5pct", rel_gap=1e-4, **extra)
             recs.append((mode, r1, r05, rb))
-        best = min(r["objective"] for _, *rs in recs for r in rs if r["starts"])
+        objs = [r["objective"] for _, *rs in recs for r in rs if r["starts"]]
+        if not objs:  # no schedule exists (the envelope cannot pay for the programme)
+            rows.append({"target": tgt, "start": "all", "warm_status": "rejected (infeasible)",
+                         "note": "no feasible schedule: total funding below total spend"})
+            continue
+        best = min(objs)
         for mode, r1, r05, rb in recs:
             first_obj = r1["trace"][0][1] if r1["trace"] else None
             rows.append({"target": tgt, "start": mode, "warm_status": r1["warm_status"],
