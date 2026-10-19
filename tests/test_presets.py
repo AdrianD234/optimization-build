@@ -154,10 +154,38 @@ def test_concurrent_proofs_of_a_poor_warm_plan_are_cancelled_not_waited_for(tmp_
             worst, poor = ev["objective"], st
     warm = tmp_path / "poor.json"
     warm.write_text(json.dumps({"starts": inst.starts_to_dict(poor)}), encoding="utf-8")
-    r = solver.solve(str(path), workers=3, time_limit=60, preset="1pct", n_leaves=4, warm_start=str(warm))
+    # E66: the presets triage such a plan; this test is about the concurrent-proofs path, so take the preset's options
+    # with triage off (an argument equal to solve()'s default would not override the preset)
+    opts = {**solver.PRESETS["1pct"], "warm_triage": False, "n_leaves": 4}
+    r = solver.solve(str(path), workers=3, time_limit=60, warm_start=str(warm), **opts)
     assert r.proven and r.dual_bound <= bf + 1e-9 * abs(bf)
     assert r.objective - bf <= 1e-2 * abs(r.objective) + 1e-6
     assert any("concurrent proofs started" in line for line in r.log)
+
+
+def test_presets_triage_a_poor_warm_plan_and_stay_exact(tmp_path):
+    """E66: the presets run warm triage. A plan far from certified (here the worst feasible schedule found) switches
+    the solve to best-first with no concurrent proofs; the result is still certified within the preset's gap."""
+    assert all(p["warm_triage"] for p in solver.PRESETS.values())
+    raw = S.tiny(6, 9, 100, 7, True, 0.8, 1.0)
+    path = write_instance(tmp_path, raw)
+    inst = I.from_dict(raw)
+    bf, _ = S.brute_force(inst)
+    rng = np.random.default_rng(0)
+    worst, poor = -np.inf, None
+    for _ in range(3000):
+        st = np.array([rng.choice(a) for a in inst.allowed])
+        ev = evaluate(inst, st)
+        if ev["feasible"] and ev["objective"] > worst:
+            worst, poor = ev["objective"], st
+    warm = tmp_path / "poor.json"
+    warm.write_text(json.dumps({"starts": inst.starts_to_dict(poor)}), encoding="utf-8")
+    for preset, gap in (("1pct", 1e-2), ("0.5pct", 5e-3)):
+        r = solver.solve(str(path), workers=3, time_limit=60, preset=preset, n_leaves=4, warm_start=str(warm))
+        assert any("warm triage" in line for line in r.log)
+        assert not any("concurrent proofs started" in line for line in r.log)
+        assert r.proven and r.dual_bound <= bf + 1e-9 * abs(bf)
+        assert r.objective - bf <= gap * abs(r.objective) + 1e-6
 
 def test_cold_primal_options_keep_the_result_exact(tmp_path):
     """E39 options (LP-disagreement LNS, LNS deferred to the first incumbent, primal-leaf HiGHS settings) change the

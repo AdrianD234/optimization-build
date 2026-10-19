@@ -491,8 +491,12 @@ PRESETS.update({
     # E39/E42: 12 LNS workers (cold is LNS-limited: -11% pooled over 5 seeds), started after the ramp-up so warm
     # strong branching has all workers (-10% warm 0.5% on the envelope scenarios; cold has no incumbent to search yet)
     # E55: root MIR cuts on the layers' shortfall rows (act only on instances with distribution layers)
+    # E66: warm triage on (acts only when the screen finds the warm plan > 3 x rel_gap from its bound: a plan from
+    # another envelope or an edited model; then best-first and no concurrent proofs, which otherwise start ~45 pools)
     "1pct": dict(rel_gap=1e-2, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=12,
-                 lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5),
+                 lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5,
+                 warm_triage=True),
     "0.5pct": dict(rel_gap=5e-3, lp_screen=True, quick_seconds=0.0, n_leaves=24, sb_candidates=4, lns_workers=12,
-                   lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5),
+                   lns_seconds=1800.0, lns_after_rampup=True, cutoff_after=10.0, slice_seconds=10.0, layer_cuts=5,
+                   warm_triage=True),
 })

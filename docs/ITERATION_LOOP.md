@@ -216,6 +216,7 @@ The user's practitioner's report presents capopt as a rapid optioneering tool. E
 | E62 | The cost of overriding the optimum: a large low-BCR project forced early; small projects moved | ✅ | P217 forced early: 2-5% of PV (CFADS), 3% ($2bn), ~10% ($1.5bn P95); six mid-size projects moved up to 10 years: <= 0.06% |
 | E63 | Warm starts across funding envelopes (CFADS <-> CFADS-DS, scaled x0.9 / 0.98 / 1.1) | ✅ | instant feasible fallback (0.01-5 s); needs `warm_triage` (1% in 10-26 s vs 92-232 s without); cold 6-28 s; x0.9 infeasible, reported |
 | E64 | Time to certified 1% / 0.5% / 0.1% and to a 1e-5 proof, CFADS and CFADS-DS, warm and cold | ✅ | warm 0.2-0.3 s to 0.5%, 0.2-381 s to 0.1%, 58-356 s to a proof; cold 5-71 s to 0.5%, 341 s to > 30 min to a proof |
+| E66 | `warm_triage` on by default in the presets | ✅ adopted | good warm plans unaffected; edits where it fires -27% (9 faster, 2 slower of 16); cross-envelope 1% in 10-26 s instead of 92-232 s |
 | E65 | The optioneering loop: pin a third, re-optimise, tweak, prove | ✅ | pins + re-certify 0.5% in 6-11 s, tweak 15 s, final 1e-5 proof 218 s; pins cost 0.44% PV |
 
-**Status of the practitioner capabilities track (2026-10-20): done (E58-E65).** Report data and plain-English findings are in the gitignored `private/report_data/` (FINDINGS.md). Candidate follow-up: `warm_triage` on by default in the presets (E63).
+**Status of the practitioner capabilities track (2026-10-20): done (E58-E65).** Report data and plain-English findings are in the gitignored `private/report_data/` (FINDINGS.md). `warm_triage` is now on in the presets (E66).
