@@ -571,6 +571,27 @@ EXTRACT = {"s1500_P95": "objective bestP95Real_LIN40_base_s1500_pm0_TOT.pkl",
            "s1500_P95high": "objective bestP95Real_LIN40_high_s1500_pm0_TOT.pkl"}
 
 
+CPO_FORCED = {  # case -> the CPO's own stored result for the same forced start (its schedule is a second warm start)
+    "cfadsds_P50_2029": "CFADS less debt service - Waitemata startP50_Real_LIN40_base_cfads_ds_TOT.pkl",
+    "s2000_P50_2026": "Waitemata startP50Real_LIN40_base_s2000_pm0_TOT.pkl",
+    "s1500_P95_2026": "Waitemata startP95Real_LIN40_base_s1500_pm0_TOT.pkl",
+    "s1500_P95high_2026": "Waitemata startP95Real_LIN40_high_s1500_pm0_TOT.pkl",
+}
+
+
+def _cpo_forced_plan(case: str) -> Path | None:
+    """The CPO's stored schedule for this forced case, as a capopt plan file (None when there is none)."""
+    if case not in CPO_FORCED:
+        return None
+    out = RES / "override" / "plans" / f"{case}__cpo_forced.json"
+    if not out.exists():
+        sys.path.insert(0, str(ROOT / "tools"))
+        import extract_cpo as X
+        _, sol, _ = X.build(Path(os.environ["CAPOPT_CPO_PRESETS"]) / CPO_FORCED[case], f"cpo_forced_{case}")
+        write_plan(sol["starts"], out)
+    return out
+
+
 def _override_inst(stem: str) -> tuple[Path, Path]:
     if stem in EXTRACT:
         p = _extract(EXTRACT[stem], f"CPO233_{stem}")
@@ -592,6 +613,12 @@ def cmd_override() -> None:
         fraw = TM.pin(raw, {"P217": year}, calendar=True, name=f"{raw['name']}__P217_{year}")
         fpath = write_instance(fraw)
         f = run(group, f"{case}__forced__value", fpath, 600, bpath, **VALUE)
+        cpo_f = _cpo_forced_plan(case)
+        if cpo_f is not None:  # also warm from the CPO's own forced plan; keep the better of the two
+            f2 = run(group, f"{case}__forced_cpowarm__value", fpath, 600, cpo_f, **VALUE)
+            if f2["starts"] and (not f["starts"] or f2["objective"] < f["objective"]):
+                f = dict(f2, dual_bound=max(f2["dual_bound"], f["dual_bound"]))
+                f["certified_gap"] = (f["objective"] - f["dual_bound"]) / abs(f["objective"])
         mb, mf = b["metrics"], f["metrics"]
         loss = mb["pv"] - mf["pv"]
         tb = {r["id"]: r for r in project_table(inst, b["starts"])}
