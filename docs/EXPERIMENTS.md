@@ -1408,3 +1408,21 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 * **Remedy (a), growth-neutral prioritisation** (the user's idea): optimise on real benefits, then report the schedule's PV with growth applied. It keeps the real optimum ($73.66bn real) and reports $256.8bn / $634.7bn under calendar 3% / 5% growth.
 * **Remedy (b), opening-anchored growth**: optimise on growth that runs from each project's opening. Delay earns nothing, so the optimiser picks the same schedule as remedy (a) (median 2045, real PV $73.66bn), and the reported PV ($130.3bn at 3%, $200.8bn at 5%) is internally consistent with the growth assumption.
 * **Verdict**: both remedies remove the bias and give the same programme. (b) is the coherent model when growth describes demand that builds after opening; (a) is the simple, conservative choice when the growth assumption is uncertain: it never lets the growth rate change the order of projects.
+
+### E65: the optioneering loop (pin a third, re-optimise, tweak, prove)
+
+* **Setup** (CFADS-DS, `practitioner.py loop`): a decision-maker's session, timed step by step.
+  1. **Pin a third of the programme**: 77 random projects get windows: 25 pinned at their optimal year, 20 given ±1 year around it, 13 windows 3-5 years earlier, 19 windows 2-4 years later. Re-optimise the rest warm from the unpinned optimum (`0.5pct`); a cold run for contrast.
+  2. **One more tweak**: the largest unpinned project still starting after 2035 (P105, $5.1bn) is pinned five years earlier; re-optimise warm from step 1's plan (`0.5pct`).
+  3. **Final run to optimality**: the proof settings (gap 1e-5, 16 LNS workers) warm from step 2's plan.
+
+| Step | Windows | Seconds | Certified gap | PV vs the unpinned optimum |
+|---|---|---|---|---|
+| 1 pin a third, warm | 77 | 10.7 | 0.45% | -0.44% |
+| 1' the same, cold | 77 | 5.5 | 0.37% | -0.44% |
+| 2 one more pin, warm from step 1 | 78 | 14.8 | 0.22% | -0.53% |
+| 3 final run to optimality, warm from step 2 | 78 | 217.7 | 0.001% (proven to 1e-5) | -0.53% |
+
+* **A working session turns in seconds**: pinning a third of the programme and re-certifying took 6-11 s, a further tweak 15 s; the final proof of the pinned plan to 1e-5 took under 4 minutes. The step-2 plan was already within 0.002% of the proven optimum: the proof only certifies it.
+* **Pinning shrinks the search**: with a third of the starts fixed or boxed, a cold solve certifies 0.5% faster (5.5 s) than the unpinned cold solve (about 27 s, final presets table), and faster than the warm start, whose repaired plan is far from the pinned optimum.
+* **The pins' price is visible at every step**: 0.44% of PV for the 77 preferences, another 0.09% for the tweak.
