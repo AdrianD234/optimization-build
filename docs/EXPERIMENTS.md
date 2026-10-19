@@ -1458,3 +1458,30 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 
   Moving a handful of small or mid-size projects by up to a decade costs at most about 0.06% of PV. The optimiser absorbs a move by re-timing 30-150 other projects by a year or so; holding the rest fixed typically costs two to eight times more, or breaks the cash balance when a project is pulled forward.
 * **Verdict**: the cost of an override depends on the size and value of what is moved, not on how far: a decade's move of small projects is noise, a large low-value project forced early is the most expensive single decision in the programme.
+
+### E63: warm starts across funding envelopes
+
+* **Setup** (`practitioner.py warm_envelopes`): the base plan of one envelope used as the warm start for another. CFADS → CFADS-DS and back, and CFADS-DS → CFADS-DS with every year's funding scaled by 0.9, 0.98 and 1.1. Each target is solved cold, warm from the other plan as it is, and warm with `warm_triage` (E44: when the screen finds the warm plan far from certified, solve the most promising last year first and skip the concurrent proofs). Measured: time to the first feasible schedule, time to a certified 1% and 0.5%, the incumbent after a fixed 10 s budget, and whether the warm plan was feasible, repaired or rejected.
+
+| Target | Start | Warm plan | First feasible (s) | 1% (s) | 0.5% (s) | After 10 s, vs the best plan found |
+|---|---|---|---|---|---|---|
+| CFADS-DS | cold | | 10.4 | 27.9 | 30.5 | 48% worse (objective) |
+| CFADS-DS | warm from CFADS | repaired | 5.2 | 198.0 | 209.3 | 97% worse |
+| CFADS-DS | warm from CFADS + triage | repaired | 5.1 | 26.1 | 33.9 | 97% worse |
+| CFADS | cold | | 3.8 | 6.4 | 8.0 | 0.01% |
+| CFADS | warm from CFADS-DS | feasible | 0.02 | 178.9 | 182.7 | 569% worse |
+| CFADS | warm from CFADS-DS + triage | feasible | 0.01 | 9.8 | 9.0 | 0.03% |
+| CFADS-DS x 0.98 | cold | | 7.7 | 14.4 | 16.5 | 0.9% |
+| CFADS-DS x 0.98 | warm from CFADS-DS | repaired | 0.6 | 232.2 | 239.5 | 294% worse |
+| CFADS-DS x 0.98 | warm from CFADS-DS + triage | repaired | 0.6 | 18.6 | 27.9 | 7.3% |
+| CFADS-DS x 1.1 | cold | | 8.0 | 16.2 | 17.4 | 0.9% |
+| CFADS-DS x 1.1 | warm from CFADS-DS | feasible | 0.01 | 92.0 | 96.7 | 132% worse |
+| CFADS-DS x 1.1 | warm from CFADS-DS + triage | feasible | 0.02 | 13.6 | 18.2 | 1.1% |
+| CFADS-DS x 0.9 | any | rejected | no schedule exists | | | |
+
+  "Worse" is in objective terms (holding-cash penalty minus PV), which is near zero relative to its parts: a plan made for another envelope holds the wrong amount of cash idle, and its penalty can exceed the programme's whole PV.
+* **A plan from another envelope gives an instant feasible answer** (0.01-5 s, against 4-10 s cold): kept as it is when the new envelope can pay for it (a richer envelope), repaired by re-timing a few projects when it cannot.
+* **Use it with warm triage.** As it is, such a plan is feasible but poor, and the pipeline then proves every surviving last year against it at once (about 45 concurrent proofs): 1% takes 92-232 s, and on a machine short of memory these pools ran out of commit ("paging file too small"). With `warm_triage` the same warm start certifies 1% in 9.8-26 s.
+* **It does not beat cold on CFADS-type envelopes**: cold certifies 1% in 6-28 s, because a CFADS profile is fast from scratch. The warm start's value is the immediate fallback plan, not speed to the certificate.
+* **An envelope that cannot pay for the programme is reported, not bent**: total spend is 97% of total CFADS-DS funding, so a 10% cut leaves no feasible schedule for the full programme (every project must be built); cold and warm both return "no schedule" within 4 s.
+* **Verdict**: across envelopes, warm-start with `warm_triage=True`, or simply start cold; turning `warm_triage` on by default in the presets is a candidate change (it only acts when the warm plan is far from certified).
