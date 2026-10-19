@@ -1382,3 +1382,29 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 
 * **Any profile is just a different PV per start year**, and every case certifies 1% cold in 5-19 s, as for the supplied benefits.
 * **The shape moves the value of the programme a lot, the schedule very little.** Discounting rewards early benefits, so the same real benefits are worth about 12.5% more front-loaded and 12.5% less back-loaded. But re-optimising for the new shape gains at most 0.1% over keeping the old schedule: front-loaded projects drift a few years earlier, back-loaded ones later, and the cash envelope still sets the sequence.
+
+### E61: benefit growth against the discount rate (the deferral bias and two remedies)
+
+* **Setup** (`capopt.benefits.rebuild` with `growth` and `anchor`): every project's real benefit grows by g = 3% or 5% a year, above the MBCM discount rate (2%, then 1.5% after year 30). Two anchors:
+  * **calendar-indexed**: benefit in calendar year y is multiplied by (1 + g)^(y - 2026), so a later start earns more growth;
+  * **opening-anchored**: year k after opening earns (1 + g)^k, whenever the project opens, so delay earns nothing.
+
+  CFADS-DS; the production objective (holding-cash penalty on) and the pure-PV objective (penalty off, the extreme); value runs certified to 0.01-0.1%. Each resulting schedule is then valued under every basis (real, calendar 3/5%, opening 3/5%).
+* **PV of one project against its start year** (analytic, `growth_curves`): a median-size project is worth $11M started in 2026 and $6M started in 2060 with no growth, but under calendar 5% growth $34M in 2026 rising to $90M in 2060. Opening-anchored 5% growth falls with delay ($29M to $15M), like the un-grown stream. The large project P217 under calendar 5% rises from $14.7bn (2026) to $32.6bn (2050), and falls only when the 2099 horizon starts cutting its 40-year stream.
+
+| Objective | Optimised on | Median start | Starting after 2050 | Real PV | PV, calendar 3% | PV, calendar 5% | PV, opening 3% | PV, opening 5% |
+|---|---|---|---|---|---|---|---|---|
+| penalty on | real (no growth) = remedy (a) | 2045 | 39% | **$73.66bn** | $256.8bn | $634.7bn | $130.27bn | $200.73bn |
+| penalty on | calendar 3% | 2054 | 55% | $65.42bn (-11.2%) | **$282.6bn** | | | |
+| penalty on | calendar 5% | 2057 | 56% | $65.30bn (-11.3%) | | **$794.9bn** | | |
+| penalty on | opening 3% = remedy (b) | 2045 | 38% | $73.66bn | | | **$130.27bn** | |
+| penalty on | opening 5% = remedy (b) | 2045 | 40% | $73.66bn | | | | **$200.75bn** |
+| penalty off | real (no growth) | 2047 | 40% | **$73.70bn** | | | | |
+| penalty off | calendar 3% or 5% | 2058 | 95% | $61.32bn (-16.8%) | **$298.7bn** | **$889.4bn** | | |
+| penalty off | opening 3% / 5% | 2046-2047 | 43-45% | $73.66-73.70bn | | | $130.33bn | $200.84bn |
+
+* **The deferral bias is real and large.** With calendar-indexed growth above the discount rate every project is worth more the later it starts. With the cash penalty off, 95% of projects start after 2050 (median 2058, against 2047 without growth), clustering just before the horizon would cut their benefit streams. With the penalty on, holding cash idle is costly, so the spend profile stays on the funding path, but the order flips: the median start moves from 2045 to 2054-2057.
+* **The bias destroys real value**: valued on real benefits, the calendar-grown optimum is 11% (penalty on) to 17% (penalty off) worse. The extra "PV" it reports (+10% at 3%, +25% at 5% over the real optimum's grown PV) is an artefact of where calendar growth is anchored, not of better sequencing.
+* **Remedy (a), growth-neutral prioritisation** (the user's idea): optimise on real benefits, then report the schedule's PV with growth applied. It keeps the real optimum ($73.66bn real) and reports $256.8bn / $634.7bn under calendar 3% / 5% growth.
+* **Remedy (b), opening-anchored growth**: optimise on growth that runs from each project's opening. Delay earns nothing, so the optimiser picks the same schedule as remedy (a) (median 2045, real PV $73.66bn), and the reported PV ($130.3bn at 3%, $200.8bn at 5%) is internally consistent with the growth assumption.
+* **Verdict**: both remedies remove the bias and give the same programme. (b) is the coherent model when growth describes demand that builds after opening; (a) is the simple, conservative choice when the growth assumption is uncertain: it never lets the growth rate change the order of projects.
