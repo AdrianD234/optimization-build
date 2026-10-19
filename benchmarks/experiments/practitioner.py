@@ -706,7 +706,8 @@ def cmd_cpo_pairs() -> None:
 
 def cmd_small_moves() -> None:
     """E62b: move several small projects forward or back by up to 10 years; the rest re-optimised (warm) and, where
-    the moved plan stays feasible, also held fixed."""
+    the moved plan stays feasible, also held fixed. Two tiers: the 60 smallest projects, and mid-size ones (50th-90th
+    percentile of real cost)."""
     group = "small_moves"
     rows, gantt = [], []
     for sc in _arg("--scenarios", "cfadsds_P50,cfads_P50").split(","):
@@ -717,44 +718,47 @@ def cmd_small_moves() -> None:
         pv0 = base["metrics"]["pv"]
         tb = {r["id"]: r for r in project_table(inst, base["starts"])}
         sizes = {p: tb[p]["spend_real_m"] for p in inst.ids}
-        small = [p for p in sorted(inst.ids, key=lambda p: sizes[p])][:60]
-        rng = np.random.default_rng(62)
-        moves = {}
-        for p in rng.permutation(small):
-            a = inst.allowed[inst.ids.index(p)]
-            s0 = base["starts"][p]
-            for k in rng.permutation([-10, -7, -5, -3, 3, 5, 7, 10]):
-                if a[0] <= s0 + k <= a[-1]:
-                    moves[str(p)] = int(s0 + k)
+        ranked = sorted(inst.ids, key=lambda p: sizes[p])
+        tiers = {"smallest": ("", ranked[:60]),  # the 60 smallest projects
+                 "mid-size": ("mid_", ranked[len(ranked) // 2:9 * len(ranked) // 10])}  # 50th-90th percentile
+        for tier, (prefix, small) in tiers.items():
+            rng = np.random.default_rng(62)
+            moves = {}
+            for p in rng.permutation(small):
+                a = inst.allowed[inst.ids.index(p)]
+                s0 = base["starts"][p]
+                for k in rng.permutation([-10, -7, -5, -3, 3, 5, 7, 10]):
+                    if a[0] <= s0 + k <= a[-1]:
+                        moves[str(p)] = int(s0 + k)
+                        break
+                if len(moves) == 6:
                     break
-            if len(moves) == 6:
-                break
-        arms = {"each": [{p: s} for p, s in moves.items()], "all6": [moves]}
-        for arm, sets in arms.items():
-            for mv in sets:
-                tag = "all6" if arm == "all6" else f"{next(iter(mv))}"
-                praw = TM.pin(raw, mv, name=f"CPO233_{sc}__small_{tag}")
-                path = write_instance(praw)
-                rec = run(group, f"{sc}__{tag}__value", path, 300, bp, **VALUE)
-                fixed = dict(base["starts"], **mv)
-                mfix = metrics(I.load(path), fixed)
-                rows.append({
-                    "scenario": sc, "moved": tag, "projects_moved": len(mv),
-                    "years_moved": "/".join(str(s - base["starts"][p]) for p, s in mv.items()),
-                    "moved_real_cost_m": sum(sizes[p] for p in mv),
-                    "pv_change_reoptimised_m": (rec["metrics"]["pv"] - pv0) / 1e6,
-                    "pv_change_reoptimised_pct": 100 * (rec["metrics"]["pv"] - pv0) / pv0,
-                    "objective_change_pct": 100 * (rec["objective"] - base["objective"]) / abs(base["objective"]),
-                    "rest_fixed_feasible": mfix["feasible"],
-                    "pv_change_rest_fixed_pct": 100 * (mfix["pv"] - pv0) / pv0 if mfix["feasible"] else None,
-                    "other_projects_moved": sum(1 for p in inst.ids if p not in mv and rec["starts"][p] != base["starts"][p]),
-                    "value_gap": rec["certified_gap"], "seconds": rec["seconds"]})
-                if arm == "all6":
-                    for p, s in mv.items():
-                        gantt.append({"scenario": sc, "id": p, "name": tb[p]["name"], "real_cost_m": sizes[p],
-                                      "bcr": tb[p]["bcr"], "baseline_start": tb[p]["start"], "baseline_end": tb[p]["end"],
-                                      "rescheduled_start": 2026 + s,
-                                      "rescheduled_end": 2026 + s + tb[p]["duration"] - 1})
+            arms = {"each": [{p: s} for p, s in moves.items()], "all6": [moves]}
+            for arm, sets in arms.items():
+                for mv in sets:
+                    tag = prefix + ("all6" if arm == "all6" else f"{next(iter(mv))}")
+                    praw = TM.pin(raw, mv, name=f"CPO233_{sc}__small_{tag}")
+                    path = write_instance(praw)
+                    rec = run(group, f"{sc}__{tag}__value", path, 300, bp, **VALUE)
+                    fixed = dict(base["starts"], **mv)
+                    mfix = metrics(I.load(path), fixed)
+                    rows.append({
+                        "scenario": sc, "tier": tier, "moved": tag, "projects_moved": len(mv),
+                        "years_moved": "/".join(str(s - base["starts"][p]) for p, s in mv.items()),
+                        "moved_real_cost_m": sum(sizes[p] for p in mv),
+                        "pv_change_reoptimised_m": (rec["metrics"]["pv"] - pv0) / 1e6,
+                        "pv_change_reoptimised_pct": 100 * (rec["metrics"]["pv"] - pv0) / pv0,
+                        "objective_change_pct": 100 * (rec["objective"] - base["objective"]) / abs(base["objective"]),
+                        "rest_fixed_feasible": mfix["feasible"],
+                        "pv_change_rest_fixed_pct": 100 * (mfix["pv"] - pv0) / pv0 if mfix["feasible"] else None,
+                        "other_projects_moved": sum(1 for p in inst.ids if p not in mv and rec["starts"][p] != base["starts"][p]),
+                        "value_gap": rec["certified_gap"], "seconds": rec["seconds"]})
+                    if arm == "all6":
+                        for p, s in mv.items():
+                            gantt.append({"scenario": sc, "tier": tier, "id": p, "name": tb[p]["name"], "real_cost_m": sizes[p],
+                                          "bcr": tb[p]["bcr"], "baseline_start": tb[p]["start"], "baseline_end": tb[p]["end"],
+                                          "rescheduled_start": 2026 + s,
+                                          "rescheduled_end": 2026 + s + tb[p]["duration"] - 1})
     write_csv(REPORT / "override" / "small_moves_table.csv", rows)
     write_csv(REPORT / "override" / "small_moves_gantt.csv", gantt)
     print(json.dumps(rows, indent=1))
