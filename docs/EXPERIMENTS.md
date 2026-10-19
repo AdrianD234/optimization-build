@@ -1485,3 +1485,19 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 * **It does not beat cold on CFADS-type envelopes**: cold certifies 1% in 6-28 s, because a CFADS profile is fast from scratch. The warm start's value is the immediate fallback plan, not speed to the certificate.
 * **An envelope that cannot pay for the programme is reported, not bent**: total spend is 97% of total CFADS-DS funding, so a 10% cut leaves no feasible schedule for the full programme (every project must be built); cold and warm both return "no schedule" within 4 s.
 * **Verdict**: across envelopes, warm-start with `warm_triage=True`, or simply start cold; turning `warm_triage` on by default in the presets is a candidate change (it only acts when the warm plan is far from certified).
+
+### E64: the time-to-gap table (CFADS and CFADS-DS)
+
+* **Setup** (`practitioner.py time_to_gap`, plus `existing` for the stored evidence): the four CFADS-type scenarios, warm (from the CPO's stored plan) and cold, one seed each, every run load-clean (outside load at most 2 cores). Targets: certified 1% and 0.5% (the presets), 0.1% (`0.5pct` with `rel_gap=1e-3`, 600 s cap) and proven optimal at gap 1e-5 (COPT's stopping point), with the official KPI campaign's proof configuration (automatic strong branching, 60 s slices, 16 LNS workers; 1,800 s cap). A first pass of the proofs without automatic strong branching stalled near a 0.07% gap on CFADS-DS for 15 minutes; those records are kept but not used.
+
+| Scenario | Warm 1% | Warm 0.5% | Warm 0.1% | Warm proof | Cold 1% | Cold 0.5% | Cold 0.1% | Cold proof |
+|---|---|---|---|---|---|---|---|---|
+| CFADS P50 | 0.2 | 0.2 | 0.2 | 61 | 4.6 | 6.6 | 9.6 | 341 |
+| CFADS P95 | 0.3 | 0.3 | 0.3 | 58 | 11.3 | 11.3 | 14.2 | 742 |
+| CFADS-DS P50 | 0.3 | 0.3 | 5.9 | 225 | 19.3 | 35.1 | 384 | 961 |
+| CFADS-DS P95 | 0.3 | 0.3 | 381 | 356 | 15.4 | 71.2 | >600 (0.33%) | >1,800 (0.27%) |
+
+  Seconds; `>` = not reached by the cap (the gap then). The stored evidence agrees: the final presets table (3 seeds) has warm 1% / 0.5% in 0.2-0.3 s and cold 1% in 7-19 s on these scenarios, and the official KPI campaign proved the CFADS-DS pair warm in a median of 207-501 s.
+* **Time rises steeply in the last fraction of a percent.** Warm on CFADS-DS P50: 0.3 s to 1% and 0.5%, 6 s to 0.1%, 225 s to a proof; cold: 19 s, 35 s, 384 s, 961 s. Each tenfold tightening of the gap costs roughly ten times more time near the end, because the remaining gap sits in many medium-sized projects whose start years trade off against each other (GAP_ANATOMY).
+* **A good plan in hand changes everything near the end**: warm proofs take 1-6 minutes where cold ones take 6-16 minutes or more. Cold CFADS-DS P95 is the hard case: after 30 minutes the plan is still 0.27% from proven (its cold primal side is slow, E39), while from the stored plan it is proven in 6 minutes.
+* **CFADS-DS P95 at 0.1%**: the `0.5pct` settings with a 0.1% target (4-candidate strong branching) take longer (381 s) than the proof settings take to reach 1e-5 (356 s); for that scenario, tight targets want the proof configuration.
