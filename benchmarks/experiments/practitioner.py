@@ -855,7 +855,7 @@ def cmd_time_to_gap() -> None:
         path = CPO / "instances" / f"CPO233_{sc}.json"
         for mode in ("warm", "cold"):
             for lvl, opts in GAPS.items():
-                tl = 900 if lvl.startswith("proof") else 300
+                tl = {"proof_1e-5": 1800, "0.1pct": 600}.get(lvl, 300)  # the CFADS-DS cold proofs need > 900 s
                 r = run(group, f"{sc}__{mode}__{GAP_LABEL.get(lvl, lvl)}", path, tl,
                         cpo_plan(sc) if mode == "warm" else None, **opts)
                 rows.append({"scenario": sc, "mode": mode, "target": lvl, "seconds": r["seconds"],
