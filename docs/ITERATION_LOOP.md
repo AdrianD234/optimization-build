@@ -213,4 +213,5 @@ The user's practitioner's report presents capopt as a rapid optioneering tool. E
 | E59 | Sequencing rules (`timing.after_start`, `after_finish`, `not_after`, `lag_between`) | ✅ | strong time-indexed rows, decomposition unchanged, brute-force tested; on mid-size projects nearly free, warm 1% in 0.4-2.8 s |
 | E60 | Benefit profile shapes (`benefits.shape_stream`: linear / logarithmic / exponential, equal real totals) | ✅ | PV ±12.5% front- vs back-loaded; re-optimising gains <= 0.1%; cold 1% in 5-19 s |
 | E61 | Benefit growth vs the discount rate: calendar vs opening anchors; growth-neutral ranking | ✅ | calendar growth > discount rate defers 95% of projects past 2050 (penalty off) and costs 11-17% real PV; both remedies keep the real optimum |
+| E62 | The cost of overriding the optimum: a large low-BCR project forced early; small projects moved | ✅ | P217 forced early: 2-5% of PV (CFADS), 3% ($2bn), ~10% ($1.5bn P95); six mid-size projects moved up to 10 years: <= 0.06% |
 | E65 | The optioneering loop: pin a third, re-optimise, tweak, prove | ✅ | pins + re-certify 0.5% in 6-11 s, tweak 15 s, final 1e-5 proof 218 s; pins cost 0.44% PV |

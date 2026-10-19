@@ -1426,3 +1426,35 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 * **A working session turns in seconds**: pinning a third of the programme and re-certifying took 6-11 s, a further tweak 15 s; the final proof of the pinned plan to 1e-5 took under 4 minutes. The proof improved the step-2 plan by only 0.05% of the objective (its PV changed by -0.002%): the quick answers were already as good as the final one for decision purposes.
 * **Pinning shrinks the search**: with a third of the starts fixed or boxed, a cold solve certifies 0.5% faster (5.5 s) than the unpinned cold solve (about 27 s, final presets table), and faster than the warm start, whose repaired plan is far from the pinned optimum.
 * **The pins' price is visible at every step**: 0.44% of PV for the 77 preferences, another 0.09% for the tweak.
+
+**E59 addendum: rules with a large project at stake.** B = P221 (real cost $5.2bn, real benefit/cost 2.1, optimal start 10 years before P217). "P221 not before P217 finishes" costs 0.66% of PV on CFADS and 0.68% on CFADS-DS (about $0.5bn): the optimiser pulls P217 forward 9-12 years and pushes P221 back 7-10 years. "P217 no later than P221" costs 0.19% / 0.28%. Both re-certify 1% in 5-18 s, warm or cold.
+
+### E62: the cost of overriding the optimum
+
+* **Setup** (`practitioner.py override`, `small_moves`, `cpo_pairs`):
+  * **Large project**: P217, the programme's largest project ($6.5bn real cost, $5.9bn real benefit; BCR 0.6 at its optimal start, which is 2046-2066 depending on the envelope), pinned decades early. Cases: CFADS-DS to 2028 and to 2029 (the CPO notebook's own forced-start rule), CFADS to 2028, and the flat envelopes the CPO itself stored forced pairs for ($2.0bn P50, $1.5bn P95 base and high benefits, all to 2026). Both plans of each pair are value runs (certified to 0.01%; 0.4% / 1.0% on the hard $1.5bn envelope after 10 minutes); the forced runs are warm-started from the base plan and from the CPO's own stored forced plan, keeping the better. Outputs: PV, cost PV, BCR, the expenditure-weighted BCR by year, every displaced project, Gantt data.
+  * **Small projects**: two tiers of six (the smallest projects, $0-2M real each; mid-size, the 50th-90th size percentile, $23-179M each), each pinned 3-10 years earlier or later, one at a time and all six together; the rest re-optimised (value run) and, separately, held fixed.
+  * PV forgone is stated against **both** denominators: the objective-best PV (the share of the optimum given up) and the forced PV (how much more valuable the optimum is).
+
+| Case | P217 start, optimal → forced | PV best | PV forced | Forgone | % of best | % of forced | BCR best → forced |
+|---|---|---|---|---|---|---|---|
+| CFADS-DS P50 | 2054 → 2028 | $73.66bn | $70.13bn | $3.53bn | 4.79% | 5.03% | 1.82 → 1.74 |
+| CFADS-DS P50 | 2054 → 2029 | $73.66bn | $70.04bn | $3.62bn | 4.91% | 5.17% | 1.82 → 1.74 |
+| CFADS P50 | 2046 → 2028 | $79.93bn | $78.27bn | $1.67bn | 2.09% | 2.13% | 1.77 → 1.73 |
+| $2.0bn flat P50 | 2048 → 2026 | $79.14bn | $76.72bn | $2.42bn | 3.06% | 3.16% | 1.70 → 1.65 |
+| $1.5bn flat P95 | 2066 → 2026 | $67.29bn | $60.60bn | $6.69bn | 9.94% | 11.04% | 1.40 → 1.26 |
+| $1.5bn flat P95, high benefits | 2066 → 2026 | $80.75bn | $72.72bn | $8.03bn | 9.94% | 11.04% | 1.68 → 1.51 |
+
+* **capopt reproduces the CPO's stored results**: the forced plans match the CPO's own forced runs to the dollar shown ($70.04bn, $76.72bn, $60.60bn, $72.72bn), and the base plans match its objective-best runs.
+* **Forcing the large, low-BCR project early costs 2-5% of programme PV on the CFADS paths, 3% on the $2bn envelope and about 10% on the tight $1.5bn P95 envelope** (between 9.0% and 10.4% given that envelope's certified gaps). The often-quoted "9.8%" is the second denominator on rounded figures ((67 - 61) / 61); exactly it is 11.0%, and 9.9% of the optimum.
+* **It breaks the value-ordered programme.** On CFADS-DS the objective-best expenditure-weighted BCR descends smoothly (3.25 in 2027, 2.74 in 2033, 2.28 in 2042, 1.11 in 2054, 0.70 in 2060). Forced, it collapses to about 0.6 in 2033-2036 while P217's spend dominates and jumps back to 2.5-2.8 in 2039-2045. Three large high-BCR projects (BCR 2.8-3.1, $2.1-4.2bn each) slip about ten years and lose $0.9-1.3bn of PV each; 174-204 projects are re-timed in all.
+* **Small projects are cheap to move**:
+
+| Moved | PV change, rest re-optimised (CFADS / CFADS-DS) | Rest held fixed |
+|---|---|---|
+| one of the smallest, 3-10 years | -0.008% to +0.003% / -0.05% to 0.00% | 0.000% or infeasible |
+| one mid-size, 5-10 years | -0.027% to +0.002% / -0.020% to -0.001% | -0.008% to -0.042% |
+| six mid-size together ($411M) | -0.052% / -0.060% | infeasible |
+
+  Moving a handful of small or mid-size projects by up to a decade costs at most about 0.06% of PV. The optimiser absorbs a move by re-timing 30-150 other projects by a year or so; holding the rest fixed typically costs two to eight times more, or breaks the cash balance when a project is pulled forward.
+* **Verdict**: the cost of an override depends on the size and value of what is moved, not on how far: a decade's move of small projects is noise, a large low-value project forced early is the most expensive single decision in the programme.

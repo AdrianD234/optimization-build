@@ -788,30 +788,45 @@ def cmd_warm_envelopes() -> None:
     targets = {  # target -> (instance, [source plans])
         "cfadsds_P50": (CPO / "instances" / "CPO233_cfadsds_P50.json", ["cfads_P50"]),
         "cfads_P50": (CPO / "instances" / "CPO233_cfads_P50.json", ["cfadsds_P50"]),
+        # total spend is 97% of total CFADS-DS funding: a 10% cut cannot pay for the whole programme (infeasible,
+        # reported as such); 2% smaller is the feasible smaller envelope
         "cfadsds_P50_x0.9": (_scaled("cfadsds_P50", 0.9), ["cfadsds_P50"]),
+        "cfadsds_P50_x0.98": (_scaled("cfadsds_P50", 0.98), ["cfadsds_P50"]),
         "cfadsds_P50_x1.1": (_scaled("cfadsds_P50", 1.1), ["cfadsds_P50"]),
     }
     for tgt, (path, sources) in targets.items():
-        best = None
-        for src in [None] + sources:
+        recs = []
+        # warm = the other envelope's plan as it is; warm + triage = the same, but when the screen finds the plan far
+        # from certified the solve goes best-first with no concurrent proofs (E44): a plan made for another envelope
+        # is feasible but poor, and proving ~45 last years against it at once swamps the machine
+        arms = [(None, False)] + [(src, False) for src in sources] + [(src, True) for src in sources]
+        for src, tri in arms:
             warm = None if src is None else plans[src]
-            mode = "cold" if src is None else f"warm from {src}"
-            tag = "cold" if src is None else f"warm_{src}"
-            r1 = run(group, f"{tgt}__{tag}__1pct", path, 300, warm, preset="1pct")
-            r05 = run(group, f"{tgt}__{tag}__05pct", path, 300, warm, preset="0.5pct")
-            rb = run(group, f"{tgt}__{tag}__budget10", path, 10, warm, preset="0.5pct", rel_gap=1e-4)
+            mode = "cold" if src is None else f"warm from {src}" + (" + triage" if tri else "")
+            tag = "cold" if src is None else ("warmtri_" if tri else "warm_") + src
+            extra = {"warm_triage": True} if tri else {}
+            r1 = run(group, f"{tgt}__{tag}__1pct", path, 300, warm, preset="1pct", **extra)
+            r05 = run(group, f"{tgt}__{tag}__05pct", path, 300, warm, preset="0.5pct", **extra)
+            rb = run(group, f"{tgt}__{tag}__budget10", path, 10, warm, preset="0.5pct", rel_gap=1e-4, **extra)
+            recs.append((mode, r1, r05, rb))
+        objs = [r["objective"] for _, *rs in recs for r in rs if r["starts"]]
+        if not objs:  # no schedule exists (the envelope cannot pay for the programme)
+            rows.append({"target": tgt, "start": "all", "warm_status": "rejected (infeasible)",
+                         "note": "no feasible schedule: total funding below total spend"})
+            continue
+        best = min(objs)
+        for mode, r1, r05, rb in recs:
             first_obj = r1["trace"][0][1] if r1["trace"] else None
             rows.append({"target": tgt, "start": mode, "warm_status": r1["warm_status"],
-                         "time_to_first_feasible_s": r1["time_to_first_feasible"], "first_objective": first_obj,
+                         "time_to_first_feasible_s": r1["time_to_first_feasible"],
+                         "first_feasible_vs_best_pct": 100 * (first_obj - best) / abs(best)
+                         if first_obj is not None else None,
                          "time_to_1pct_s": r1["seconds"] if r1["proven"] else None,
                          "time_to_0.5pct_s": r05["seconds"] if r05["proven"] else None,
-                         "gap_at_10s_pct": 100 * rb["certified_gap"] if rb["certified_gap"] is not None else None,
-                         "pv_at_10s_bn": rb["metrics"]["pv"] / 1e9 if rb["metrics"] else None,
-                         "objective_at_10s": rb["objective"]})
-            best = rb["objective"] if best is None else min(best, rb["objective"])
-        for r in rows:
-            if r["target"] == tgt and r["first_objective"] is not None:
-                r["first_feasible_vs_best_10s_pct"] = 100 * (r["first_objective"] - best) / abs(best)
+                         "at_10s_vs_best_pct": 100 * (rb["objective"] - best) / abs(best) if rb["starts"] else None,
+                         "at_10s_certified_gap_pct": 100 * rb["certified_gap"]
+                         if rb["certified_gap"] is not None else None,
+                         "pv_at_10s_bn": rb["metrics"]["pv"] / 1e9 if rb["metrics"] else None})
     write_csv(REPORT / "warm_envelopes" / "warm_envelopes_table.csv", rows)
     env = []
     for tgt, (path, _) in targets.items():
@@ -825,7 +840,12 @@ def cmd_warm_envelopes() -> None:
 # ---- E64: the time-to-gap table ----------------------------------------------------------------------------------------
 
 GAPS = {"1pct": dict(preset="1pct"), "0.5pct": dict(preset="0.5pct"), "0.1pct": dict(preset="0.5pct", rel_gap=1e-3),
-        "proof_1e-5": dict(rel_gap=1e-5, lns_workers=16, lns_after_rampup=True)}
+        # the official KPI campaign's proof configuration (automatic strong branching: the CFADS bound-stall fix,
+        # E22-E23; 60 s slices; leaf cutoff after 60 s; LNS patience). Without sb_candidates=-1 the CFADS-DS proofs
+        # stall near a 0.07% gap for 15 minutes.
+        "proof_1e-5": dict(rel_gap=1e-5, lns_workers=16, lns_seconds=1800, sb_candidates=-1, lns_after_rampup=True,
+                           cutoff_after=60.0, lns_patience=15.0, slice_seconds=60.0)}
+GAP_LABEL = {"proof_1e-5": "proofkpi_1e-5"}  # records of the first, weaker proof setting keep the old label
 
 
 def cmd_time_to_gap() -> None:
@@ -836,7 +856,8 @@ def cmd_time_to_gap() -> None:
         for mode in ("warm", "cold"):
             for lvl, opts in GAPS.items():
                 tl = 900 if lvl.startswith("proof") else 300
-                r = run(group, f"{sc}__{mode}__{lvl}", path, tl, cpo_plan(sc) if mode == "warm" else None, **opts)
+                r = run(group, f"{sc}__{mode}__{GAP_LABEL.get(lvl, lvl)}", path, tl,
+                        cpo_plan(sc) if mode == "warm" else None, **opts)
                 rows.append({"scenario": sc, "mode": mode, "target": lvl, "seconds": r["seconds"],
                              "certified": r["proven"], "achieved_gap_pct": 100 * r["certified_gap"]
                              if r["certified_gap"] is not None else None,
