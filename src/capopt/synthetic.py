@@ -97,7 +97,7 @@ def brute_force(inst: I.Instance) -> tuple[float, np.ndarray | None]:
     """Exact optimum by enumeration (tiny instances only)."""
     from .evaluate import objective
     from .heuristics import kernel as K
-    exact = inst.cash_cap is not None or inst.layers is not None  # the compiled kernel knows neither
+    exact = inst.cash_cap is not None or inst.layers is not None or bool(inst.precedence)  # unknown to the kernel
     pk = None if exact else K.pack(inst)
     sizes = [len(a) for a in inst.allowed]
     if np.prod(sizes, dtype=float) > 2e6:

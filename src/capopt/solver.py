@@ -122,6 +122,10 @@ def repair_schedule(inst: I.Instance, starts: np.ndarray, time_limit: float = 10
     t0 = time.time()
     st = np.array([int(a[np.argmin(np.abs(a - int(s)))]) for a, s in zip(inst.allowed, starts)], dtype=np.int64)
     moved = st != np.asarray(starts)
+    if inst.precedence:  # projects in a broken sequencing rule are re-timed with the rest of the neighbourhood
+        from .timing import violators
+        for p in violators(inst.precedence, st):
+            moved[p] = True
     if evaluate(inst, st)["feasible"]:
         if log is not None and moved.any():
             log.append(f"warm start repaired: {int(moved.sum())} starts moved to the nearest allowed year")
