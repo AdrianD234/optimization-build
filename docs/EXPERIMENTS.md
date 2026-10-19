@@ -1501,3 +1501,28 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 * **Time rises steeply in the last fraction of a percent.** Warm on CFADS-DS P50: 0.3 s to 1% and 0.5%, 6 s to 0.1%, 225 s to a proof; cold: 19 s, 35 s, 384 s, 961 s. Each tenfold tightening of the gap costs roughly ten times more time near the end, because the remaining gap sits in many medium-sized projects whose start years trade off against each other (GAP_ANATOMY).
 * **A good plan in hand changes everything near the end**: warm proofs take 1-6 minutes where cold ones take 6-16 minutes or more. Cold CFADS-DS P95 is the hard case: after 30 minutes the plan is still 0.27% from proven (its cold primal side is slow, E39), while from the stored plan it is proven in 6 minutes.
 * **CFADS-DS P95 at 0.1%**: the `0.5pct` settings with a 0.1% target (4-candidate strong branching) take longer (381 s) than the proof settings take to reach 1e-5 (356 s); for that scenario, tight targets want the proof configuration.
+
+### E66: warm triage on by default in the presets
+
+* **Hypothesis** (from E63): a warm plan far from certified (another funding envelope's plan, or an edited model's repaired plan) makes the presets prove every surviving last year against it at once, about 45 concurrent pools. That is slow and can exhaust commit memory. `warm_triage` (E44) acts only when the screen finds the warm plan more than 3 x rel_gap from its bound: it then solves the most promising last year first and skips the concurrent proofs. So it should help the poor-plan cases and leave the near-certified ones untouched.
+* **Setup**: both presets with and without `warm_triage`, load-gated (2 outside cores).
+  * Warm from the CPO's stored plans, all 10 scenarios, 2 seeds (80 runs).
+  * The E38 model iteration: 1, 3 or 5 projects edited, warm from the unedited plan, 10 scenarios, 1 seed (120 runs).
+  * Every cell where triage fired, repeated with a second seed (16 runs).
+* **Warm from a good plan: identical.** Triage never fires (the screen already certifies or nearly certifies the plan); times match to 0.1 s on all 10 scenarios at both presets (warm 1% 0.2-0.4 s, 0.5% 0.2-5.8 s).
+* **Model iteration: triage fired on 8 of 60 edits, all on the flat envelopes** (s1750, and s2000_P50 with one edit), where the repaired plan starts 1-5% off. Paired over 2 seeds (16 runs):
+
+| Edit | Preset | without triage (seed 0 / 1) | with triage (seed 0 / 1) |
+|---|---|---|---|
+| s1750_P95, 1 project | 1% | 57.0 / 71.7 | 25.1 / 38.8 |
+| s1750_P95, 3 projects | 1% | 57.6 / 53.0 | 36.1 / 38.4 |
+| s1750_P95, 5 projects | 1% | >120 / 32.8 | 75.0 / 27.2 |
+| s1750_P50, 1 project | 0.5% | >120 / 59.2 | >120 / 71.0 |
+| s1750_P95, 1 project | 0.5% | 57.8 / 66.3 | 47.4 / 45.7 |
+| s1750_P95, 3 projects | 0.5% | 62.5 / >120 | 95.4 / >120 |
+| s1750_P95, 5 projects | 0.5% | >120 / >120 | >120 / >120 |
+| s2000_P50, 1 project | 0.5% | 70.7 / 73.4 | 20.9 / 21.1 |
+
+  Faster in 9 of 16, slower in 2 (single seeds of the seed-noisy s1750 scenarios, +20% and +53%), unchanged in 5; shifted geometric mean 74 → 55 s (-27%). Over all 60 edits the medians are unchanged (1.6 s to 1%, 3.1 s to 0.5%) and the shifted geometric means fall 13% (1%) and 5% (0.5%).
+* **Across funding envelopes (E63)**: 1% in 10-26 s instead of 92-232 s, and no runaway pool count (the untriaged runs exhausted commit memory on a busy machine).
+* **Verdict: adopted.** Both presets now set `warm_triage=True`. Tests: the presets triage a poor warm plan and stay certified against brute force; the concurrent-proofs test runs the preset's options with triage off. To turn it off with a preset, pass the preset's options explicitly (an argument equal to `solve()`'s default does not override a preset).
