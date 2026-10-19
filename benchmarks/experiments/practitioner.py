@@ -840,7 +840,12 @@ def cmd_warm_envelopes() -> None:
 # ---- E64: the time-to-gap table ----------------------------------------------------------------------------------------
 
 GAPS = {"1pct": dict(preset="1pct"), "0.5pct": dict(preset="0.5pct"), "0.1pct": dict(preset="0.5pct", rel_gap=1e-3),
-        "proof_1e-5": dict(rel_gap=1e-5, lns_workers=16, lns_after_rampup=True)}
+        # the official KPI campaign's proof configuration (automatic strong branching: the CFADS bound-stall fix,
+        # E22-E23; 60 s slices; leaf cutoff after 60 s; LNS patience). Without sb_candidates=-1 the CFADS-DS proofs
+        # stall near a 0.07% gap for 15 minutes.
+        "proof_1e-5": dict(rel_gap=1e-5, lns_workers=16, lns_seconds=1800, sb_candidates=-1, lns_after_rampup=True,
+                           cutoff_after=60.0, lns_patience=15.0, slice_seconds=60.0)}
+GAP_LABEL = {"proof_1e-5": "proofkpi_1e-5"}  # records of the first, weaker proof setting keep the old label
 
 
 def cmd_time_to_gap() -> None:
@@ -851,7 +856,8 @@ def cmd_time_to_gap() -> None:
         for mode in ("warm", "cold"):
             for lvl, opts in GAPS.items():
                 tl = 900 if lvl.startswith("proof") else 300
-                r = run(group, f"{sc}__{mode}__{lvl}", path, tl, cpo_plan(sc) if mode == "warm" else None, **opts)
+                r = run(group, f"{sc}__{mode}__{GAP_LABEL.get(lvl, lvl)}", path, tl,
+                        cpo_plan(sc) if mode == "warm" else None, **opts)
                 rows.append({"scenario": sc, "mode": mode, "target": lvl, "seconds": r["seconds"],
                              "certified": r["proven"], "achieved_gap_pct": 100 * r["certified_gap"]
                              if r["certified_gap"] is not None else None,
