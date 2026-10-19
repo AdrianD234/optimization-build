@@ -1423,6 +1423,6 @@ The user is preparing a practitioner's report that presents capopt as a rapid op
 | 2 one more pin, warm from step 1 | 78 | 14.8 | 0.22% | -0.53% |
 | 3 final run to optimality, warm from step 2 | 78 | 217.7 | 0.001% (proven to 1e-5) | -0.53% |
 
-* **A working session turns in seconds**: pinning a third of the programme and re-certifying took 6-11 s, a further tweak 15 s; the final proof of the pinned plan to 1e-5 took under 4 minutes. The step-2 plan was already within 0.002% of the proven optimum: the proof only certifies it.
+* **A working session turns in seconds**: pinning a third of the programme and re-certifying took 6-11 s, a further tweak 15 s; the final proof of the pinned plan to 1e-5 took under 4 minutes. The proof improved the step-2 plan by only 0.05% of the objective (its PV changed by -0.002%): the quick answers were already as good as the final one for decision purposes.
 * **Pinning shrinks the search**: with a third of the starts fixed or boxed, a cold solve certifies 0.5% faster (5.5 s) than the unpinned cold solve (about 27 s, final presets table), and faster than the warm start, whose repaired plan is far from the pinned optimum.
 * **The pins' price is visible at every step**: 0.44% of PV for the 77 preferences, another 0.09% for the tweak.
